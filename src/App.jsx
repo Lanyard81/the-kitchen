@@ -1594,7 +1594,11 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
   const [fridgeOpen, setFridgeOpen] = useState(false);
   const [skillFilter, setSkillFilter] = useState("All");
   const [dietFilters, setDietFilters] = useState([]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const cats = ["All", "★ Favourites", ...Array.from(new Set(recipes.map((r) => r.category).filter(Boolean)))];
+  const realCats = cats.slice(2); // excludes "All" and "★ Favourites"
+  const activeFilterCount = (cat !== "All" && cat !== "★ Favourites" ? 1 : 0) + (skillFilter !== "All" ? 1 : 0) + dietFilters.length;
+  const filtersLabel = cat !== "All" && cat !== "★ Favourites" ? `Filters: ${cat}` : "Filters";
   const filtered = recipes.filter((r) => {
     const okCat = cat === "All" || (cat === "★ Favourites" ? favs.includes(r.id) : r.category === cat);
     const okQ = !query || r.title.toLowerCase().includes(query.toLowerCase());
@@ -1627,8 +1631,8 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
 
       {fridgeOpen && <WhatCanIMake recipes={recipes} open={open} />}
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-        {cats.map((c) => (
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        {["All", "★ Favourites"].map((c) => (
           <button
             key={c}
             onClick={() => setCat(c)}
@@ -1644,56 +1648,105 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20, alignItems: "center" }}>
-        <span style={{ fontSize: 11.5, color: C.faint, fontWeight: 600, letterSpacing: 0.8, textTransform: "uppercase" }}>Skill</span>
-        {["All", ...SKILL_LEVELS].map((s) => {
-          const active = skillFilter === s;
-          const col = s === "All" ? C.inkSoft : skillColor(s);
-          return (
-            <button
-              key={s}
-              onClick={() => setSkillFilter(s)}
-              style={{
-                border: `1px solid ${active ? col : C.line}`,
-                background: active ? (s === "All" ? C.green : col) : C.card,
-                color: active ? C.onPrimary : col,
-                borderRadius: 999, padding: "4px 12px", fontSize: 12, fontWeight: 600,
-              }}
+      <div style={{ marginBottom: 20 }}>
+        <button
+          onClick={() => setFiltersOpen(!filtersOpen)}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 7,
+            background: "none", border: "none", padding: "2px 0",
+            fontSize: 13, fontWeight: 600, color: activeFilterCount ? C.ink : C.inkSoft,
+          }}
+        >
+          <span aria-hidden="true" style={{ display: "inline-block", transform: filtersOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", color: C.faint }}>▸</span>
+          {filtersLabel}
+          {activeFilterCount > 0 && (
+            <span style={{ background: C.mustard, color: C.onAccent, borderRadius: 999, fontSize: 11, fontWeight: 700, minWidth: 18, height: 18, display: "inline-grid", placeItems: "center", padding: "0 5px" }}>
+              {activeFilterCount}
+            </span>
+          )}
+          {activeFilterCount > 0 && !filtersOpen && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); setCat("All"); setSkillFilter("All"); setDietFilters([]); }}
+              style={{ fontSize: 12, fontWeight: 500, color: C.faint, marginLeft: 2 }}
             >
-              {s === "All" ? "All levels" : s}
-            </button>
-          );
-        })}
-      </div>
+              · clear
+            </span>
+          )}
+        </button>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6, alignItems: "center" }}>
-        <span style={{ fontSize: 11.5, color: C.faint, fontWeight: 600, letterSpacing: 0.8, textTransform: "uppercase" }}>Diet</span>
-        {DIET_TAGS.map((d) => {
-          const active = dietFilters.includes(d);
-          const col = dietColor(d);
-          return (
-            <button
-              key={d}
-              onClick={() => setDietFilters(active ? dietFilters.filter((x) => x !== d) : [...dietFilters, d])}
-              style={{
-                border: `1px solid ${active ? col : C.line}`,
-                background: active ? col : C.card,
-                color: active ? C.onPrimary : col,
-                borderRadius: 999, padding: "4px 12px", fontSize: 12, fontWeight: 600,
-              }}
-            >
-              {d}
-            </button>
-          );
-        })}
-        {dietFilters.length > 0 && (
-          <button onClick={() => setDietFilters([])} style={{ background: "none", border: "none", color: C.faint, fontSize: 12, fontWeight: 500 }}>
-            Clear
-          </button>
+        {filtersOpen && (
+          <div style={{ marginTop: 12, background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 16px" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+              <span style={{ fontSize: 11.5, color: C.faint, fontWeight: 600, letterSpacing: 0.8, textTransform: "uppercase" }}>Category</span>
+              {realCats.map((c) => {
+                const active = cat === c;
+                return (
+                  <button
+                    key={c}
+                    onClick={() => setCat(active ? "All" : c)}
+                    style={{
+                      border: `1px solid ${active ? C.green : C.line}`,
+                      background: active ? C.green : C.bg,
+                      color: active ? C.onPrimary : C.inkSoft,
+                      borderRadius: 999, padding: "5px 13px", fontSize: 12.5, fontWeight: 500,
+                    }}
+                  >
+                    {c}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+              <span style={{ fontSize: 11.5, color: C.faint, fontWeight: 600, letterSpacing: 0.8, textTransform: "uppercase" }}>Skill</span>
+              {["All", ...SKILL_LEVELS].map((s) => {
+                const active = skillFilter === s;
+                const col = s === "All" ? C.inkSoft : skillColor(s);
+                return (
+                  <button
+                    key={s}
+                    onClick={() => setSkillFilter(s)}
+                    style={{
+                      border: `1px solid ${active ? col : C.line}`,
+                      background: active ? (s === "All" ? C.green : col) : C.bg,
+                      color: active ? C.onPrimary : col,
+                      borderRadius: 999, padding: "4px 12px", fontSize: 12, fontWeight: 600,
+                    }}
+                  >
+                    {s === "All" ? "All levels" : s}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: 11.5, color: C.faint, fontWeight: 600, letterSpacing: 0.8, textTransform: "uppercase" }}>Diet</span>
+              {DIET_TAGS.map((d) => {
+                const active = dietFilters.includes(d);
+                const col = dietColor(d);
+                return (
+                  <button
+                    key={d}
+                    onClick={() => setDietFilters(active ? dietFilters.filter((x) => x !== d) : [...dietFilters, d])}
+                    style={{
+                      border: `1px solid ${active ? col : C.line}`,
+                      background: active ? col : C.bg,
+                      color: active ? C.onPrimary : col,
+                      borderRadius: 999, padding: "4px 12px", fontSize: 12, fontWeight: 600,
+                    }}
+                  >
+                    {d}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11, color: C.faint, marginTop: 10 }}>
+              Diet tags are estimated from ingredients — check the full list for allergies or intolerances.
+            </div>
+          </div>
         )}
-      </div>
-      <div style={{ fontSize: 11, color: C.faint, marginBottom: 20 }}>
-        Diet tags are estimated from ingredients — check the full list for allergies or intolerances.
       </div>
 
       {filtered.length === 0 && (
