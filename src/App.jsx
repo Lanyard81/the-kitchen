@@ -944,6 +944,44 @@ const deriveSkill = (r) => {
 const skillOf = (r) => (r.skill && SKILL_LEVELS.includes(r.skill) ? r.skill : deriveSkill(r));
 const skillColor = (lvl) => (lvl === "Easy" ? C.green : lvl === "Moderate" ? C.mustard : C.danger);
 
+/* dietary tags — auto-detected from ingredient text, with manual override via recipe.diet */
+const DIET_TAGS = ["Vegetarian", "Vegan", "Dairy-free", "Gluten-free"];
+const DIET_MEAT_KW = ["chicken", "beef", "lamb", "pork", "bacon", "ham", "sausage", "chorizo", "mince", "duck", "turkey", "veal", "steak", "chuck", "rump", "sirloin", "hock", "prosciutto", "salami", "meatball", "meatballs"];
+const DIET_SEAFOOD_KW = ["prawn", "prawns", "fish", "salmon", "tuna", "seafood", "anchovy", "anchovies", "barramundi", "flathead"];
+const DIET_ANIMAL_KW = ["gelatine", "gelatin", "marshmallow", "marshmallows"];
+const DIET_ANIMAL_PHRASES = ["jelly crystals"];
+const DIET_DAIRY_KW = ["milk", "butter", "cream", "cheese", "yoghurt", "yogurt", "ghee", "custard", "buttermilk", "mascarpone", "ricotta", "parmesan", "mozzarella", "feta", "halloumi", "gruyere", "nutella", "caramel"];
+const DIET_DAIRY_PHRASES = ["milk chocolate", "white chocolate"];
+const DIET_DAIRY_EXCEPT_PHRASES = ["coconut milk", "coconut cream", "almond milk", "soy milk", "oat milk"];
+const DIET_EGG_KW = ["egg", "eggs"];
+const DIET_HONEY_KW = ["honey"];
+const DIET_GLUTEN_KW = ["flour", "pasta", "spaghetti", "penne", "fettuccine", "linguine", "rigatoni", "macaroni", "lasagne", "gnocchi", "noodle", "noodles", "bread", "breadcrumb", "breadcrumbs", "panko", "pastry", "biscuit", "biscuits", "weet-bix", "oats", "barley", "malt", "beer", "cornflake", "cornflakes", "tortilla", "tortillas", "bun", "buns", "baguette", "croissant", "couscous", "semolina", "shortcrust"];
+const DIET_GLUTEN_EXCEPT_PHRASES = ["rice noodle", "rice vermicelli", "corn tortilla", "rice flour", "almond flour", "cornflour", "gluten-free"];
+
+const dietWordMatch = (text, words) => words.some((w) => new RegExp(`(?<![a-z])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z])`).test(text));
+const dietPhraseStrip = (text, phrases) => phrases.reduce((t, p) => t.split(p).join(" "), text);
+
+const deriveDiet = (r) => {
+  const raw = (r.ingredients || []).map((i) => i.name || "").join(" | ").toLowerCase();
+  const isMeat = dietWordMatch(raw, DIET_MEAT_KW) || dietWordMatch(raw, DIET_SEAFOOD_KW) || dietWordMatch(raw, DIET_ANIMAL_KW) || DIET_ANIMAL_PHRASES.some((p) => raw.includes(p));
+  const dairyText = dietPhraseStrip(raw, DIET_DAIRY_EXCEPT_PHRASES);
+  const isDairy = dietWordMatch(dairyText, DIET_DAIRY_KW) || DIET_DAIRY_PHRASES.some((p) => dairyText.includes(p));
+  const isEgg = dietWordMatch(raw, DIET_EGG_KW);
+  const isHoney = dietWordMatch(raw, DIET_HONEY_KW);
+  const glutenText = dietPhraseStrip(raw, DIET_GLUTEN_EXCEPT_PHRASES);
+  const isGluten = dietWordMatch(glutenText, DIET_GLUTEN_KW);
+  const vegetarian = !isMeat;
+  const vegan = vegetarian && !isDairy && !isEgg && !isHoney;
+  const tags = [];
+  if (vegan) tags.push("Vegan"); else if (vegetarian) tags.push("Vegetarian");
+  if (!isDairy) tags.push("Dairy-free");
+  if (!isGluten) tags.push("Gluten-free");
+  return tags;
+};
+const dietOf = (r) => (Array.isArray(r.diet) ? r.diet : deriveDiet(r));
+const dietColor = (tag) => (tag === "Vegan" || tag === "Vegetarian" ? C.green : C.mustard);
+
+
 /* Australian cup-to-gram conversions (1 cup = 250 ml) — ported from the Bakehouse */
 const CUP_TABLE = {
   "Plain / SR flour": 150, "Caster sugar": 220, "Brown sugar (packed)": 200, "Icing sugar": 160,
@@ -1555,12 +1593,14 @@ export default function TheKitchen() {
 function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open }) {
   const [fridgeOpen, setFridgeOpen] = useState(false);
   const [skillFilter, setSkillFilter] = useState("All");
+  const [dietFilters, setDietFilters] = useState([]);
   const cats = ["All", "★ Favourites", ...Array.from(new Set(recipes.map((r) => r.category).filter(Boolean)))];
   const filtered = recipes.filter((r) => {
     const okCat = cat === "All" || (cat === "★ Favourites" ? favs.includes(r.id) : r.category === cat);
     const okQ = !query || r.title.toLowerCase().includes(query.toLowerCase());
     const okSkill = skillFilter === "All" || skillOf(r) === skillFilter;
-    return okCat && okQ && okSkill;
+    const okDiet = dietFilters.length === 0 || dietFilters.every((d) => dietOf(r).includes(d));
+    return okCat && okQ && okSkill && okDiet;
   });
 
   return (
@@ -1626,6 +1666,36 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
         })}
       </div>
 
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6, alignItems: "center" }}>
+        <span style={{ fontSize: 11.5, color: C.faint, fontWeight: 600, letterSpacing: 0.8, textTransform: "uppercase" }}>Diet</span>
+        {DIET_TAGS.map((d) => {
+          const active = dietFilters.includes(d);
+          const col = dietColor(d);
+          return (
+            <button
+              key={d}
+              onClick={() => setDietFilters(active ? dietFilters.filter((x) => x !== d) : [...dietFilters, d])}
+              style={{
+                border: `1px solid ${active ? col : C.line}`,
+                background: active ? col : C.card,
+                color: active ? C.onPrimary : col,
+                borderRadius: 999, padding: "4px 12px", fontSize: 12, fontWeight: 600,
+              }}
+            >
+              {d}
+            </button>
+          );
+        })}
+        {dietFilters.length > 0 && (
+          <button onClick={() => setDietFilters([])} style={{ background: "none", border: "none", color: C.faint, fontSize: 12, fontWeight: 500 }}>
+            Clear
+          </button>
+        )}
+      </div>
+      <div style={{ fontSize: 11, color: C.faint, marginBottom: 20 }}>
+        Diet tags are estimated from ingredients — check the full list for allergies or intolerances.
+      </div>
+
       {filtered.length === 0 && (
         <div style={{ color: C.inkSoft, padding: "40px 0", textAlign: "center" }}>
           {cat === "★ Favourites" && skillFilter === "All"
@@ -1652,6 +1722,9 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
                 <div style={{ display: "flex", gap: 8, fontSize: 12.5, color: C.inkSoft, alignItems: "center", flexWrap: "wrap" }}>
                   {r.category && <span style={{ background: C.mustardSoft, color: C.accentText, padding: "2px 9px", borderRadius: 999, fontWeight: 600 }}>{r.category}</span>}
                   <span style={{ border: `1px solid ${skillColor(skillOf(r))}`, color: skillColor(skillOf(r)), padding: "1px 8px", borderRadius: 999, fontWeight: 600, fontSize: 11.5 }}>{skillOf(r)}</span>
+                  {dietOf(r).map((d) => (
+                    <span key={d} style={{ border: `1px solid ${dietColor(d)}`, color: dietColor(d), padding: "1px 8px", borderRadius: 999, fontWeight: 600, fontSize: 11.5 }}>{d}</span>
+                  ))}
                   <span>{scalingKind(r) === "serves" ? `Serves ${r.baseServings}` : scalingKind(r) === "pan" ? panLabel(r.basePan) : (r.yield || "Batch")}</span>
                   {r.time && <span>· {r.time}</span>}
                 </div>
@@ -1792,6 +1865,9 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
       <h1 style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 34, margin: "0 0 6px", lineHeight: 1.1 }}>{recipe.title}</h1>
       <div style={{ color: C.inkSoft, fontSize: 14, marginBottom: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ border: `1px solid ${skillColor(skillOf(recipe))}`, color: skillColor(skillOf(recipe)), padding: "1px 10px", borderRadius: 999, fontWeight: 600, fontSize: 12 }}>{skillOf(recipe)}</span>
+        {dietOf(recipe).map((d) => (
+          <span key={d} style={{ border: `1px solid ${dietColor(d)}`, color: dietColor(d), padding: "1px 10px", borderRadius: 999, fontWeight: 600, fontSize: 12 }}>{d}</span>
+        ))}
         <span>
           {recipe.category}
           {recipe.time ? ` · ${recipe.time}` : ""}
@@ -2754,6 +2830,7 @@ function EditPage({ recipe, settings, onCancel, onSave }) {
   const [time, setTime] = useState(recipe?.time || "");
   const [servings, setServingsField] = useState(recipe?.baseServings || settings.defaultServes || 4);
   const [skill, setSkill] = useState(recipe?.skill || "");
+  const [diet, setDiet] = useState(() => (recipe ? dietOf(recipe) : []));
   const [ingText, setIngText] = useState(
     recipe ? recipe.ingredients.map((i) => (i.amount != null ? `${trimNum(i.amount)}${i.unit ? " " + i.unit : ""} ${i.name}` : i.name)).join("\n") : ""
   );
@@ -2808,6 +2885,7 @@ function EditPage({ recipe, settings, onCancel, onSave }) {
       rating: recipe?.rating || 0,
       cooked: recipe?.cooked || [],
       ...(skill ? { skill } : {}),
+      diet,
       ...(recipe?.scaling ? { scaling: recipe.scaling } : {}),
       ...(recipe?.basePan ? { basePan: recipe.basePan } : {}),
       ...(recipe?.temp ? { temp: recipe.temp } : {}),
@@ -2934,6 +3012,22 @@ function EditPage({ recipe, settings, onCancel, onSave }) {
           </select>
         </Field>
       </div>
+
+      <Field label="Dietary tags" hint="Pre-filled from the ingredients you've typed below — tick or untick to correct them. These are a filtering convenience, not verified allergen information.">
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          {DIET_TAGS.map((d) => (
+            <label key={d} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14, color: C.ink, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={diet.includes(d)}
+                onChange={(e) => setDiet(e.target.checked ? [...diet, d] : diet.filter((x) => x !== d))}
+                style={{ width: 16, height: 16, accentColor: C.green }}
+              />
+              {d}
+            </label>
+          ))}
+        </div>
+      </Field>
 
       <Field label="Ingredients — one per line" hint={'Start each line with the amount and unit, e.g. "500 g beef mince" or "2 tbsp soy sauce". Lines without an amount (like "salt, to taste") won\u2019t scale.'}>
         <textarea value={ingText} onChange={(e) => setIngText(e.target.value)} rows={9} placeholder={"500 g chicken thigh fillets\n2 tbsp honey\n1 tbsp soy sauce\nsalt and pepper, to taste"} style={{ ...inputStyle(), resize: "vertical", lineHeight: 1.6 }} />
