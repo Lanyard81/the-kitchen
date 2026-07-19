@@ -1648,7 +1648,7 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
                 <img src={r.photo} alt="" style={{ width: "100%", height: 120, objectFit: "cover", display: "block" }} />
               )}
               <div style={{ padding: "14px 44px 12px 16px", display: "flex", flexDirection: "column", gap: 7 }}>
-                <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 600, fontSize: 19, lineHeight: 1.2 }}>{r.title}</div>
+                <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 600, fontSize: 19, lineHeight: 1.2, color: C.ink }}>{r.title}</div>
                 <div style={{ display: "flex", gap: 8, fontSize: 12.5, color: C.inkSoft, alignItems: "center", flexWrap: "wrap" }}>
                   {r.category && <span style={{ background: C.mustardSoft, color: C.accentText, padding: "2px 9px", borderRadius: 999, fontWeight: 600 }}>{r.category}</span>}
                   <span style={{ border: `1px solid ${skillColor(skillOf(r))}`, color: skillColor(skillOf(r)), padding: "1px 8px", borderRadius: 999, fontWeight: 600, fontSize: 11.5 }}>{skillOf(r)}</span>
@@ -1713,7 +1713,7 @@ function WhatCanIMake({ recipes, open }) {
           onClick={() => open(r.id)}
           style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", borderTop: `1px solid ${C.line}`, padding: "10px 2px", marginTop: 8 }}
         >
-          <span style={{ fontWeight: 600, fontSize: 14.5 }}>{r.title}</span>
+          <span style={{ fontWeight: 600, fontSize: 14.5, color: C.ink }}>{r.title}</span>
           <div style={{ fontSize: 12.5, marginTop: 2, color: missing.length === 0 ? C.green : C.inkSoft }}>
             {missing.length === 0
               ? "✓ You have everything"
@@ -2147,7 +2147,7 @@ function SimilarRecipes({ recipe, recipes, favIds, open }) {
           >
             {r.photo && <img src={r.photo} alt="" style={{ width: "100%", height: 84, objectFit: "cover", display: "block" }} />}
             <div style={{ padding: "11px 14px 12px" }}>
-              <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 600, fontSize: 15.5, lineHeight: 1.25 }}>
+              <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 600, fontSize: 15.5, lineHeight: 1.25, color: C.ink }}>
                 {r.title}
                 {(r.rating || 0) > 0 && <span style={{ color: C.mustard, fontSize: 12, marginLeft: 6, letterSpacing: 1 }}>{"★".repeat(r.rating)}</span>}
               </div>
@@ -2500,7 +2500,7 @@ function BakePlanner({ recipes, plans, setPlans, sendToShop, onToast, openRecipe
                 return (
                   <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${C.line}`, flexWrap: "wrap" }}>
                     <button onClick={() => openRecipe(r.id)} style={{ background: "none", border: "none", padding: 0, textAlign: "left", flex: "1 1 170px", color: C.ink }}>
-                      <span style={{ fontSize: 15, fontWeight: 600 }}>{r.title}</span>
+                      <span style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>{r.title}</span>
                       {t && (
                         <span style={{ display: "block", fontSize: 11.5, color: C.inkSoft, marginTop: 1 }}>
                           {fmtDur(t)} start to serve{startBy ? ` · ⏰ start by ${startBy}` : ""}
@@ -2595,7 +2595,7 @@ function DayRecipePicker({ recipes, defaultServes, onPick }) {
             onClick={() => onPick(r.id, scalingKind(r) === "serves" ? (defaultServes || r.baseServings) : 1)}
             style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", padding: "7px 4px", fontSize: 14, borderRadius: 6 }}
           >
-            <span style={{ fontWeight: 600 }}>{r.title}</span>
+            <span style={{ fontWeight: 600, color: C.ink }}>{r.title}</span>
             <span style={{ color: C.inkSoft, fontSize: 12.5 }}>
               {" "}· {scalingKind(r) === "serves" ? `serves ${r.baseServings}` : scalingKind(r) === "pan" ? panLabel(r.basePan) : (r.yield || "batch")}
               {c.length ? ` · last made ${timeAgo(c[c.length - 1])}` : " · not cooked yet"}
