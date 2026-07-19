@@ -1361,7 +1361,7 @@ export default function TheKitchen() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Instrument+Sans:wght@400;500;600&display=swap');
         * { box-sizing: border-box; }
-        button { font-family: inherit; cursor: pointer; color: inherit; }
+        button { font-family: inherit; cursor: pointer; color: inherit; appearance: none; -webkit-appearance: none; background: none; }
         input, textarea, select { font-family: inherit; font-size: 15px; color: ${C.ink}; }
         input:focus, textarea:focus, select:focus, button:focus-visible { outline: 2px solid ${C.mustard}; outline-offset: 1px; }
         ::placeholder { color: ${C.faint}; }
