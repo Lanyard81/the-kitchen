@@ -1,0 +1,8 @@
+{
+  "appId": "au.becskitchen.app",
+  "appName": "The Kitchen",
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "always"
+  }
+}
