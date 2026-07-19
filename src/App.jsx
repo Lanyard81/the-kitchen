@@ -1595,7 +1595,7 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
   const [skillFilter, setSkillFilter] = useState("All");
   const [dietFilters, setDietFilters] = useState([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const cats = ["All", "★ Favourites", ...Array.from(new Set(recipes.map((r) => r.category).filter(Boolean)))];
+  const cats = ["All", "★ Favourites", ...Array.from(new Set(recipes.map((r) => r.category).filter(Boolean))).sort()];
   const realCats = cats.slice(2); // excludes "All" and "★ Favourites"
   const activeFilterCount = (cat !== "All" && cat !== "★ Favourites" ? 1 : 0) + (skillFilter !== "All" ? 1 : 0) + dietFilters.length;
   const filtersLabel = cat !== "All" && cat !== "★ Favourites" ? `Filters: ${cat}` : "Filters";
