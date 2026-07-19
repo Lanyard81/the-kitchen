@@ -3809,7 +3809,16 @@ function parsePastedRecipe(text) {
 function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick, onClose, onCooked }) {
   const [idx, setIdx] = useState(0);
   const [showIng, setShowIng] = useState(false);
-  const [timer, setTimer] = useState(null); // { total, left, running, done }
+  const [timers, setTimers] = useState({}); // { [stepIndex]: { total, left, running, done } }
+  const timer = timers[idx] || null;
+  const setTimer = (updater) => {
+    setTimers((prev) => {
+      const current = prev[idx] || null;
+      const next = typeof updater === "function" ? updater(current) : updater;
+      if (next == null) { const copy = { ...prev }; delete copy[idx]; return copy; }
+      return { ...prev, [idx]: next };
+    });
+  };
   const steps = recipe.steps;
   const stepText = applyOven(steps[idx], settings.oven);
   const stepSeconds = parseTimerSeconds(stepText);
@@ -3833,27 +3842,35 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
     };
   }, []);
 
-  // reset timer when the step changes
-  useEffect(() => { setTimer(null); }, [idx]);
-
-  // countdown
+  // countdown — ticks every running timer across all steps, so one started on step 1
+  // keeps counting down (and still beeps) even while you're viewing a later step
+  const anyRunning = Object.values(timers).some((t) => t && t.running);
   useEffect(() => {
-    if (!timer || !timer.running) return;
+    if (!anyRunning) return;
     const t = setInterval(() => {
-      setTimer((prev) => {
-        if (!prev || !prev.running) return prev;
-        if (prev.left <= 1) { beep(); return { ...prev, left: 0, running: false, done: true }; }
-        return { ...prev, left: prev.left - 1 };
+      setTimers((prev) => {
+        let changed = false;
+        const next = {};
+        for (const [k, v] of Object.entries(prev)) {
+          if (v && v.running) {
+            if (v.left <= 1) { beep(); next[k] = { ...v, left: 0, running: false, done: true }; }
+            else next[k] = { ...v, left: v.left - 1 };
+            changed = true;
+          } else {
+            next[k] = v;
+          }
+        }
+        return changed ? next : prev;
       });
     }, 1000);
     return () => clearInterval(t);
-  }, [timer && timer.running]);
+  }, [anyRunning]);
 
   const last = idx === steps.length - 1;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.ink, zIndex: 60, display: "flex", flexDirection: "column", fontFamily: "'Instrument Sans', system-ui, sans-serif" }}>
-      <div style={{ background: C.green, color: C.onPrimary, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+      <div style={{ background: C.green, color: C.onPrimary, padding: "calc(14px + env(safe-area-inset-top)) 20px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 17, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{recipe.title}</div>
           <div style={{ fontSize: 12.5, opacity: 0.75 }}>{contextLabel} · Step {idx + 1} of {steps.length}</div>
@@ -3936,6 +3953,17 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
             >
               Reset
             </button>
+          </div>
+        )}
+
+        {!last && (
+          <div style={{ marginTop: 24, paddingTop: 16, borderTop: `1px solid ${C.line}`, opacity: 0.45 }}>
+            <div style={{ fontSize: 11, letterSpacing: 0.8, textTransform: "uppercase", fontWeight: 600, color: C.inkSoft, marginBottom: 4 }}>
+              Next — step {idx + 2}
+            </div>
+            <div style={{ fontSize: 15, lineHeight: 1.45 }}>
+              {applyOven(steps[idx + 1], settings.oven)}
+            </div>
           </div>
         )}
       </div>
