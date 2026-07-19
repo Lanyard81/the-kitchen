@@ -1372,7 +1372,7 @@ export default function TheKitchen() {
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
       `}</style>
 
-      <header style={{ background: C.green, color: C.onPrimary, padding: "18px 20px 0" }}>
+      <header style={{ background: C.green, color: C.onPrimary, padding: "calc(18px + env(safe-area-inset-top)) 20px 0" }}>
         <div style={{ maxWidth: 860, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <button
