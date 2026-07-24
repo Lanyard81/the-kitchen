@@ -1,13 +1,38 @@
 {
+  "id": "./",
   "name": "The Kitchen",
   "short_name": "The Kitchen",
   "description": "Everyday cooking recipes with serving-size scaling, weekly planner and shopping list.",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#F2F0E6",
   "theme_color": "#33502F",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Shopping list",
+      "short_name": "Shop",
+      "description": "Open the shopping list",
+      "url": "./?tab=shopping",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Weekly planner",
+      "short_name": "Plan",
+      "description": "Open the weekly planner",
+      "url": "./?tab=planner",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Cook something",
+      "short_name": "Cook",
+      "description": "Browse recipes and start cooking",
+      "url": "./?tab=recipes",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
   ]
 }

@@ -14,8 +14,15 @@ const K_TEMPLATES = "becs-kitchen-templates-v1";
 const K_MYTIPS = "becs-kitchen-mytips-v1";
 const K_MYPANS = "becs-kitchen-mypans-v1";
 const K_BAKEPLANS = "becs-kitchen-bakeplans-v1";
+const K_PANTRY = "becs-kitchen-pantry-v1";
 
 const DEFAULT_SETTINGS = { defaultServes: null, oven: "fan", theme: "olive", mode: "auto", prepTicks: true };
+
+/* things most kitchens always have — suggested, not applied until the cook picks them */
+const SUGGESTED_STAPLES = [
+  "salt", "pepper", "olive oil", "vegetable oil", "plain flour", "sugar", "butter",
+  "milk", "eggs", "garlic", "brown onion", "soy sauce", "vinegar", "baking powder",
+];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -1002,6 +1009,17 @@ const canonicalItemName = (name) => {
   return n.replace(/\s+/g, " ").trim();
 };
 
+/* pantry staples: whole-word match so "salt" catches "sea salt" but not "salted butter" */
+const isPantryStaple = (name, pantry) => {
+  if (!pantry || !pantry.length) return false;
+  const n = String(name).toLowerCase();
+  return pantry.some((s) => {
+    const t = String(s).toLowerCase().trim();
+    if (!t) return false;
+    return new RegExp(`(?<![a-z])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z])`).test(n);
+  });
+};
+
 /* ---------- palette ---------- */
 
 const hexA = (hex, a) => {
@@ -1072,8 +1090,15 @@ export default function TheKitchen() {
   const [myTips, setMyTips] = useState([]);
   const [myPans, setMyPans] = useState([]);
   const [bakePlans, setBakePlans] = useState([]);
+  const [pantry, setPantry] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [tab, setTab] = useState("recipes");
+  const [tab, setTab] = useState(() => {
+    // PWA manifest shortcuts land here, e.g. ./?tab=shopping
+    try {
+      const t = new URLSearchParams(window.location.search).get("tab");
+      return ["recipes", "planner", "shopping", "tips", "settings"].includes(t) ? t : "recipes";
+    } catch { return "recipes"; }
+  });
   const [view, setView] = useState({ page: "list" });
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState("All");
@@ -1106,6 +1131,7 @@ export default function TheKitchen() {
       setMyTips(await load(K_MYTIPS, []));
       setMyPans(await load(K_MYPANS, []));
       setBakePlans(await load(K_BAKEPLANS, []));
+      setPantry(await load(K_PANTRY, []));
       setSettings({ ...DEFAULT_SETTINGS, ...(await load(K_SETTINGS, {})) });
     })();
   }, []);
@@ -1130,7 +1156,8 @@ export default function TheKitchen() {
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(""), 2400);
+    // undo toasts hang around long enough to actually be tapped
+    const t = setTimeout(() => setToast(""), toast && toast.undo ? 5200 : 2400);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -1148,7 +1175,11 @@ export default function TheKitchen() {
   const persistMyTips = (next) => { setMyTips(next); save(K_MYTIPS, next); };
   const persistMyPans = (next) => { setMyPans(next); save(K_MYPANS, next); };
   const persistBakePlans = (next) => { setBakePlans(next); save(K_BAKEPLANS, next); };
+  const persistPantry = (next) => { setPantry(next); save(K_PANTRY, next); };
   const persistSettings = (next) => { setSettings(next); save(K_SETTINGS, next); };
+
+  /* undo window: one tap to put things back exactly as they were */
+  const showUndo = (text, restore) => setToast({ text, undo: restore });
 
   const toggleFav = (id) => {
     persistFavs(favs.includes(id) ? favs.filter((f) => f !== id) : [...favs, id]);
@@ -1171,18 +1202,37 @@ export default function TheKitchen() {
     setToast("Marked as cooked — enjoy!");
   };
 
+  const duplicateRecipe = (recipe) => {
+    // a fresh copy starts its own history — rating and cooked dates belong to the original
+    const copy = { ...recipe, id: uid(), title: `${recipe.title} (copy)`, rating: 0, cooked: [] };
+    persistRecipes([copy, ...recipes]);
+    setView({ page: "edit", id: copy.id });
+    setToast("Duplicated — tweak it and save");
+  };
+
   const deleteRecipe = (id) => {
+    const prev = { recipes, favs, plan };
+    const gone = recipes.find((r) => r.id === id);
     persistRecipes(recipes.filter((r) => r.id !== id));
     persistFavs(favs.filter((f) => f !== id));
     persistPlan(Object.fromEntries(DAYS.map((d) => [d, plan[d].filter((e) => e.recipeId !== id)])));
     setView({ page: "list" });
+    showUndo(`Deleted “${gone ? gone.title : "recipe"}”`, () => {
+      persistRecipes(prev.recipes);
+      persistFavs(prev.favs);
+      persistPlan(prev.plan);
+      setView({ page: "recipe", id });
+    });
   };
 
   /* --- shopping list merging --- */
 
-  const mergeIntoShop = (items) => {
+  /* force = the cook typed this in by hand, so pantry staples are honoured rather than skipped */
+  const mergeIntoShop = (items, force = false) => {
     const next = [...shop];
+    let skipped = 0;
     for (const it of items) {
+      if (!force && isPantryStaple(it.name, pantry)) { skipped++; continue; }
       if (it.amount == null) {
         const dup = next.find((n) => n.amount == null && n.name.toLowerCase() === it.name.toLowerCase());
         if (!dup) next.push({ id: uid(), name: it.name, unit: "", amount: null, checked: false });
@@ -1196,11 +1246,15 @@ export default function TheKitchen() {
       else next.push({ id: uid(), name: canon, unit: it.unit, amount: it.amount, checked: false });
     }
     persistShop(next);
+    return skipped;
   };
 
+  const stapleNote = (skipped) =>
+    skipped ? ` · ${skipped} pantry staple${skipped > 1 ? "s" : ""} skipped` : "";
+
   const addRecipeToShop = (recipe, factor, label) => {
-    mergeIntoShop(recipe.ingredients.map((i) => ({ ...i, amount: i.amount != null ? i.amount * factor : null })));
-    setToast(`${recipe.title} (${label}) added to shopping list`);
+    const skipped = mergeIntoShop(recipe.ingredients.map((i) => ({ ...i, amount: i.amount != null ? i.amount * factor : null })));
+    setToast(`${recipe.title} (${label}) added to shopping list${stapleNote(skipped)}`);
   };
 
   const addWeekToShop = () => {
@@ -1217,8 +1271,8 @@ export default function TheKitchen() {
       }
     }
     if (!count) { setToast("The planner is empty — add some meals first"); return; }
-    mergeIntoShop(items);
-    setToast(`Ingredients for ${count} meal${count > 1 ? "s" : ""} added to shopping list`);
+    const skipped = mergeIntoShop(items);
+    setToast(`Ingredients for ${count} meal${count > 1 ? "s" : ""} added to shopping list${stapleNote(skipped)}`);
     setTab("shopping");
   };
 
@@ -1235,8 +1289,8 @@ export default function TheKitchen() {
       for (const i of r.ingredients) items.push({ ...i, amount: i.amount != null ? i.amount * e.factor : null });
     }
     if (!items.length) { setToast("Add some recipes to the plan first"); return; }
-    mergeIntoShop(items);
-    setToast(`Ingredients for “${pl.name}” added to shopping list`);
+    const skipped = mergeIntoShop(items);
+    setToast(`Ingredients for “${pl.name}” added to shopping list${stapleNote(skipped)}`);
     setTab("shopping");
   };
 
@@ -1260,7 +1314,7 @@ export default function TheKitchen() {
   const pushTimer = useRef(null);
   const pulledRef = useRef(false);
   const collectRef = useRef(() => null);
-  collectRef.current = () => ({ recipes, plan, shop, favs, templates, myTips, myPans, bakePlans, settings });
+  collectRef.current = () => ({ recipes, plan, shop, favs, templates, myTips, myPans, bakePlans, pantry, settings });
 
   const applyRemoteData = (d) => {
     if (!d || !Array.isArray(d.recipes)) return;
@@ -1272,6 +1326,7 @@ export default function TheKitchen() {
     persistMyTips(Array.isArray(d.myTips) ? d.myTips : []);
     persistMyPans(Array.isArray(d.myPans) ? d.myPans : []);
     persistBakePlans(Array.isArray(d.bakePlans) ? d.bakePlans : []);
+    persistPantry(Array.isArray(d.pantry) ? d.pantry : []);
     persistSettings({ ...DEFAULT_SETTINGS, ...(d.settings || {}) });
   };
 
@@ -1338,7 +1393,7 @@ export default function TheKitchen() {
 
   const exportData = async () => {
     const payload = JSON.stringify(
-      { app: "becs-kitchen", exported: new Date().toISOString(), recipes, plan, shop, favs, templates, myTips, myPans, bakePlans, settings },
+      { app: "becs-kitchen", exported: new Date().toISOString(), recipes, plan, shop, favs, templates, myTips, myPans, bakePlans, pantry, settings },
       null, 2
     );
     try {
@@ -1371,6 +1426,7 @@ export default function TheKitchen() {
         persistMyTips(Array.isArray(d.myTips) ? d.myTips : []);
         persistMyPans(Array.isArray(d.myPans) ? d.myPans : []);
         persistBakePlans(Array.isArray(d.bakePlans) ? d.bakePlans : []);
+        persistPantry(Array.isArray(d.pantry) ? d.pantry : []);
         persistSettings({ ...DEFAULT_SETTINGS, ...(d.settings || {}) });
         setView({ page: "list" });
         setToast(`Imported ${d.recipes.length} recipes from backup`);
@@ -1395,7 +1451,7 @@ export default function TheKitchen() {
   const unchecked = shop.filter((s) => !s.checked).length;
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Instrument Sans', system-ui, sans-serif" }}>
+    <div className="app-root" style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Instrument Sans', system-ui, sans-serif" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Instrument+Sans:wght@400;500;600&display=swap');
         * { box-sizing: border-box; }
@@ -1408,9 +1464,30 @@ export default function TheKitchen() {
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
         @keyframes timerDone { 0%, 100% { background: ${C.mustard}; } 50% { background: ${C.danger}; } }
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+        .print-only { display: none; }
+        @media print {
+          /* inline styles win on specificity, so every print override needs !important */
+          .no-print { display: none !important; }
+          .print-only { display: block !important; }
+          html, body { background: #fff !important; }
+          .app-root { background: #fff !important; color: #000 !important; }
+          .app-main { padding: 0 !important; max-width: none !important; }
+          .print-plain {
+            background: #fff !important; color: #000 !important;
+            border: none !important; border-radius: 0 !important; padding: 0 !important; margin: 0 0 14px !important;
+          }
+          .print-plain * { color: #000 !important; }
+          .print-cols { display: block !important; }
+          .print-rule { border-bottom: 1px solid #ccc !important; }
+          h1, h2 { color: #000 !important; }
+          li, section, img { break-inside: avoid; page-break-inside: avoid; }
+          img { max-height: 220px !important; }
+          a[href]:after { content: ""; }
+        }
       `}</style>
 
-      <header style={{ background: C.green, color: C.onPrimary, padding: "calc(18px + env(safe-area-inset-top)) 20px 0" }}>
+      <header className="no-print" style={{ background: C.green, color: C.onPrimary, padding: "calc(18px + env(safe-area-inset-top)) 20px 0" }}>
         <div style={{ maxWidth: 860, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <button
@@ -1459,7 +1536,7 @@ export default function TheKitchen() {
         </div>
       </header>
 
-      <main style={{ maxWidth: 860, margin: "0 auto", padding: "24px 20px 80px" }}>
+      <main className="app-main" style={{ maxWidth: 860, margin: "0 auto", padding: "24px 20px 80px" }}>
         {tab === "recipes" && view.page === "list" && (
           <ListPage
             recipes={recipes} favs={favs} toggleFav={toggleFav}
@@ -1480,6 +1557,8 @@ export default function TheKitchen() {
             onBack={() => setView({ page: "list" })}
             onEdit={() => setView({ page: "edit", id: current.id })}
             onDelete={() => deleteRecipe(current.id)}
+            onDuplicate={() => duplicateRecipe(current)}
+            onToast={setToast}
             onAddToShop={(factor, label) => addRecipeToShop(current, factor, label)}
             onAddToPlan={(day, servings) => addToPlan(day, current.id, servings)}
             onPatch={(patch) => patchRecipe(current.id, patch)}
@@ -1490,6 +1569,7 @@ export default function TheKitchen() {
           <EditPage
             recipe={view.id ? current : null}
             settings={settings}
+            knownCategories={Array.from(new Set([...CATEGORIES, ...recipes.map((r) => r.category).filter(Boolean)])).sort()}
             onCancel={() => setView(view.id ? { page: "recipe", id: view.id } : { page: "list" })}
             onSave={saveRecipe}
           />
@@ -1513,7 +1593,11 @@ export default function TheKitchen() {
             }}
             removeEntry={(day, entryId) => persistPlan({ ...plan, [day]: plan[day].filter((e) => e.id !== entryId) })}
             addEntry={addToPlan}
-            clearWeek={() => persistPlan(emptyPlan())}
+            clearWeek={() => {
+              const prev = plan;
+              persistPlan(emptyPlan());
+              showUndo("Week cleared", () => persistPlan(prev));
+            }}
             addWeekToShop={addWeekToShop}
             openRecipe={(id) => { setTab("recipes"); setView({ page: "recipe", id }); }}
           />
@@ -1534,6 +1618,13 @@ export default function TheKitchen() {
             myPans={myPans}
             onAddPan={(pan) => { persistMyPans([...myPans, { id: uid(), ...pan }]); setToast(`Saved pan: ${pan.name || panLabel(pan)}`); }}
             onRemovePan={(id) => persistMyPans(myPans.filter((p) => p.id !== id))}
+            pantry={pantry}
+            onAddStaple={(name) => {
+              const t = name.trim().toLowerCase();
+              if (!t || pantry.includes(t)) return;
+              persistPantry([...pantry, t]);
+            }}
+            onRemoveStaple={(name) => persistPantry(pantry.filter((p) => p !== name))}
             onExport={exportData}
             onImport={importData}
             restoreStarters={() => {
@@ -1548,6 +1639,10 @@ export default function TheKitchen() {
               persistShop([]);
               persistFavs([]);
               persistTemplates([]);
+              persistMyTips([]);
+              persistMyPans([]);
+              persistBakePlans([]);
+              persistPantry([]);
               persistSettings(DEFAULT_SETTINGS);
               setToast("Everything reset to a fresh kitchen");
             }}
@@ -1565,23 +1660,49 @@ export default function TheKitchen() {
             remove={(id) => persistShop(shop.filter((s) => s.id !== id))}
             addManual={(text) => {
               const parsed = parseIngredientLine(text);
-              if (parsed) mergeIntoShop([parsed]);
+              // typed by hand, so a pantry staple is deliberate — force it onto the list
+              if (parsed) mergeIntoShop([parsed], true);
             }}
-            clearChecked={() => persistShop(shop.filter((s) => !s.checked))}
-            clearAll={() => persistShop([])}
+            clearChecked={() => {
+              const prev = shop;
+              persistShop(shop.filter((s) => !s.checked));
+              showUndo("Ticked items cleared", () => persistShop(prev));
+            }}
+            clearAll={() => {
+              const prev = shop;
+              persistShop([]);
+              showUndo("Shopping list cleared", () => persistShop(prev));
+            }}
             onToast={setToast}
           />
         )}
       </main>
 
       {toast && (
-        <div style={{
-          position: "fixed", bottom: "calc(24px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)",
-          background: C.greenDeep, color: C.onPrimary, padding: "12px 22px", borderRadius: 999,
-          fontSize: 14, fontWeight: 500, boxShadow: "0 6px 20px rgba(0,0,0,0.25)",
-          animation: "toastIn 0.2s ease", zIndex: 90, maxWidth: "90vw", textAlign: "center",
-        }}>
-          {toast}
+        <div
+          className="no-print"
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed", bottom: "calc(24px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)",
+            background: C.greenDeep, color: C.onPrimary, padding: toast.undo ? "10px 12px 10px 22px" : "12px 22px", borderRadius: 999,
+            fontSize: 14, fontWeight: 500, boxShadow: "0 6px 20px rgba(0,0,0,0.25)",
+            animation: "toastIn 0.2s ease", zIndex: 90, maxWidth: "90vw", textAlign: "center",
+            display: "flex", alignItems: "center", gap: 12, justifyContent: "center",
+          }}
+        >
+          <span style={{ color: C.onPrimary }}>{toast.undo ? toast.text : toast}</span>
+          {toast.undo && (
+            <button
+              onClick={() => { const fn = toast.undo; setToast(""); fn(); }}
+              style={{
+                background: C.mustard, color: C.onAccent, border: "none", borderRadius: 999,
+                padding: "7px 16px", fontSize: 13, fontWeight: 700, flexShrink: 0,
+              }}
+            >
+              Undo
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1853,14 +1974,13 @@ function WhatCanIMake({ recipes, open }) {
 
 /* ---------- recipe view ---------- */
 
-function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [], onOpenRecipe, fav, toggleFav, onBack, onEdit, onDelete, onAddToShop, onAddToPlan, onPatch, onCooked }) {
+function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [], onOpenRecipe, fav, toggleFav, onBack, onEdit, onDelete, onDuplicate, onToast, onAddToShop, onAddToPlan, onPatch, onCooked }) {
   const kind = scalingKind(recipe);
   const startServes = settings.defaultServes || recipe.baseServings;
   const [servings, setServings] = useState(startServes);
   const [batch, setBatch] = useState(1);
   const [pan, setPan] = useState(recipe.basePan || null);
   const [customPan, setCustomPan] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [pickDay, setPickDay] = useState(false);
   const [cooking, setCooking] = useState(false);
   const [ticked, setTicked] = useState(() => new Set());
@@ -1882,7 +2002,7 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
     setBatch(1);
     setPan(recipe.basePan || null);
     setCustomPan(false);
-    setConfirmDelete(false); setPickDay(false); setCooking(false);
+    setPickDay(false); setCooking(false);
   }, [recipe.id]);
 
   // prep ticks are per-session: clear on a new recipe or when amounts rescale
@@ -1892,22 +2012,39 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
   const toggleTick = (i) =>
     setTicked((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
 
+  /* mirrors the shopping list's share: native sheet where it exists, clipboard everywhere else */
+  const shareRecipe = async () => {
+    const payload = recipeToText(recipe, factor, scaleLabel, settings);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: recipe.title, text: payload });
+      } else {
+        await navigator.clipboard.writeText(payload);
+        if (onToast) onToast("Recipe copied — paste it anywhere");
+      }
+    } catch (e) {
+      if (e && e.name === "AbortError") return;
+      try {
+        await navigator.clipboard.writeText(payload);
+        if (onToast) onToast("Recipe copied to clipboard");
+      } catch { if (onToast) onToast("Couldn't share on this device"); }
+    }
+  };
+
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
+      <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 14, padding: "6px 0", fontWeight: 500 }}>
           ← All recipes
         </button>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={toggleFav} aria-label="Toggle favourite" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 14px", fontSize: 15, color: fav ? C.mustard : C.inkSoft }}>
             {fav ? "★" : "☆"}
           </button>
-          <button onClick={onEdit} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 16px", fontSize: 13, fontWeight: 500 }}>Edit</button>
-          {!confirmDelete ? (
-            <button onClick={() => setConfirmDelete(true)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Delete</button>
-          ) : (
-            <button onClick={onDelete} style={{ background: C.danger, border: "none", color: "#fff", borderRadius: 999, padding: "7px 16px", fontSize: 13, fontWeight: 600 }}>Confirm delete</button>
-          )}
+          <button onClick={onEdit} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}>Edit</button>
+          <button onClick={onDuplicate} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}>Duplicate</button>
+          {/* single tap — the undo toast is the safety net */}
+          <button onClick={onDelete} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Delete</button>
         </div>
       </div>
 
@@ -1929,7 +2066,10 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
         </span>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+      {/* print gets a plain one-liner instead of the interactive scaler cards below */}
+      <div className="print-only" style={{ fontSize: 14, marginBottom: 12, fontWeight: 600 }}>{scaleLabel}</div>
+
+      <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <Stars value={recipe.rating || 0} onChange={(n) => onPatch({ rating: n === recipe.rating ? 0 : n })} />
         <span style={{ fontSize: 13, color: C.inkSoft }}>
           {cooked.length ? `Cooked ${cooked.length}× · last made ${timeAgo(cooked[cooked.length - 1])}` : "Not cooked yet"}
@@ -1943,7 +2083,7 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
       </div>
 
       {kind === "serves" && (
-        <div style={{ background: C.green, color: C.onPrimary, borderRadius: 16, padding: "16px 20px", marginBottom: 14 }}>
+        <div className="no-print" style={{ background: C.green, color: C.onPrimary, borderRadius: 16, padding: "16px 20px", marginBottom: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.7, fontWeight: 600 }}>Serves</div>
@@ -1980,7 +2120,7 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
       )}
 
       {kind === "batch" && (
-        <div style={{ background: C.green, color: C.onPrimary, borderRadius: 16, padding: "16px 20px", marginBottom: 14 }}>
+        <div className="no-print" style={{ background: C.green, color: C.onPrimary, borderRadius: 16, padding: "16px 20px", marginBottom: 14 }}>
           <div style={{ fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.7, fontWeight: 600, marginBottom: 8 }}>Batch size</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {BATCH_OPTIONS.map((b) => (
@@ -2006,7 +2146,7 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
       )}
 
       {kind === "pan" && (
-        <div style={{ background: C.green, color: C.onPrimary, borderRadius: 16, padding: "16px 20px", marginBottom: 14 }}>
+        <div className="no-print" style={{ background: C.green, color: C.onPrimary, borderRadius: 16, padding: "16px 20px", marginBottom: 14 }}>
           <div style={{ fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.7, fontWeight: 600, marginBottom: 4 }}>Baking pan</div>
           <div style={{ fontSize: 12.5, opacity: 0.75, marginBottom: 10 }}>
             Written for {panLabel(recipe.basePan)} — pick your pan and the amounts rescale.
@@ -2054,7 +2194,7 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22, alignItems: "center" }}>
+      <div className="no-print" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22, alignItems: "center" }}>
         <button
           onClick={() => setCooking(true)}
           style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "9px 20px", fontWeight: 600, fontSize: 13.5 }}
@@ -2088,13 +2228,25 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
             <button onClick={() => setPickDay(false)} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 12.5, padding: 6 }}>Cancel</button>
           </div>
         )}
+        <button
+          onClick={shareRecipe}
+          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontWeight: 500, fontSize: 13.5, color: C.ink }}
+        >
+          Share
+        </button>
+        <button
+          onClick={() => window.print()}
+          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontWeight: 500, fontSize: 13.5, color: C.ink }}
+        >
+          Print
+        </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, alignItems: "start" }}>
-        <section style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px 20px" }}>
+      <div className="print-cols" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, alignItems: "start" }}>
+        <section className="print-plain" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px 20px" }}>
           <h2 style={{ ...sectionHead(), marginBottom: prepOn && ticked.size > 0 ? 2 : 8 }}>Ingredients</h2>
           {prepOn && ticked.size > 0 && (
-            <div style={{ fontSize: 12, color: ticked.size === recipe.ingredients.length ? C.green : C.inkSoft, fontWeight: 600, marginBottom: 8 }}>
+            <div className="no-print" style={{ fontSize: 12, color: ticked.size === recipe.ingredients.length ? C.green : C.inkSoft, fontWeight: 600, marginBottom: 8 }}>
               {ticked.size === recipe.ingredients.length ? "✓ Everything measured — mise en place complete" : `${ticked.size} of ${recipe.ingredients.length} measured`}
             </div>
           )}
@@ -2103,9 +2255,10 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
               const amt = it.amount != null ? formatAmount(it.amount * factor, it.unit) : null;
               const done = prepOn && ticked.has(i);
               return (
-                <li key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: i < recipe.ingredients.length - 1 ? `1px solid ${C.line}` : "none", fontSize: 15, lineHeight: 1.45, opacity: done ? 0.55 : 1, transition: "opacity 0.15s" }}>
+                <li key={i} className="print-rule" style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: i < recipe.ingredients.length - 1 ? `1px solid ${C.line}` : "none", fontSize: 15, lineHeight: 1.45, opacity: done ? 0.55 : 1, transition: "opacity 0.15s" }}>
                   {prepOn && (
                     <button
+                      className="no-print"
                       onClick={() => toggleTick(i)}
                       aria-label={done ? "Mark not measured" : "Mark measured and prepped"}
                       style={{
@@ -2136,11 +2289,11 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
           </ul>
         </section>
 
-        <section style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px 20px" }}>
+        <section className="print-plain" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px 20px" }}>
           <h2 style={sectionHead()}>Method</h2>
           <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
             {recipe.steps.map((s, i) => (
-              <li key={i} style={{ display: "flex", gap: 12, padding: "10px 0", borderBottom: i < recipe.steps.length - 1 ? `1px solid ${C.line}` : "none" }}>
+              <li key={i} className="print-rule" style={{ display: "flex", gap: 12, padding: "10px 0", borderBottom: i < recipe.steps.length - 1 ? `1px solid ${C.line}` : "none" }}>
                 <span style={{ flexShrink: 0, width: 26, height: 26, borderRadius: "50%", background: C.mustardSoft, color: C.accentText, display: "grid", placeItems: "center", fontWeight: 700, fontSize: 13 }}>{i + 1}</span>
                 <span style={{ fontSize: 15, lineHeight: 1.5 }}>{applyOven(s, settings.oven)}</span>
               </li>
@@ -2260,7 +2413,7 @@ function SimilarRecipes({ recipe, recipes, favIds, open }) {
   const liked = (recipe.rating || 0) >= 4 || favIds.includes(recipe.id);
 
   return (
-    <div style={{ marginTop: 22 }}>
+    <div className="no-print" style={{ marginTop: 22 }}>
       <h2 style={{ ...sectionHead(), marginBottom: 10 }}>
         {liked ? "Liked this? You'll probably like…" : "You might also like"}
       </h2>
@@ -2337,7 +2490,6 @@ function Stepper({ label, onClick, disabled }) {
 function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBakePlanToShop, onToast, templates, onSaveTemplate, onApplyTemplate, onDeleteTemplate, setEntryServings, removeEntry, addEntry, clearWeek, addWeekToShop, openRecipe }) {
   const [mode, setMode] = useState("dinner"); // dinner | bake
   const [addingDay, setAddingDay] = useState(null);
-  const [confirmClear, setConfirmClear] = useState(false);
   const [savingTpl, setSavingTpl] = useState(false);
   const [tplName, setTplName] = useState("");
   const total = DAYS.reduce((a, d) => a + plan[d].length, 0);
@@ -2384,11 +2536,10 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
           >
             Send week to shopping list
           </button>
-          {total > 0 && (!confirmClear ? (
-            <button onClick={() => setConfirmClear(true)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Clear week</button>
-          ) : (
-            <button onClick={() => { clearWeek(); setConfirmClear(false); }} style={{ background: C.danger, border: "none", color: "#fff", borderRadius: 999, padding: "9px 16px", fontSize: 13, fontWeight: 600 }}>Confirm clear</button>
-          ))}
+          {/* single tap — undo toast restores the week */}
+          {total > 0 && (
+            <button onClick={clearWeek} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Clear week</button>
+          )}
         </div>
       </div>
 
@@ -2759,7 +2910,6 @@ function MiniStep({ label, onClick, disabled }) {
 
 function ShoppingPage({ items, toggle, remove, addManual, clearChecked, clearAll, onToast }) {
   const [text, setText] = useState("");
-  const [confirmClear, setConfirmClear] = useState(false);
   const open = items.filter((i) => !i.checked);
   const done = items.filter((i) => i.checked);
 
@@ -2805,11 +2955,10 @@ function ShoppingPage({ items, toggle, remove, addManual, clearChecked, clearAll
               Clear ticked · {done.length}
             </button>
           )}
-          {items.length > 0 && (!confirmClear ? (
-            <button onClick={() => setConfirmClear(true)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 15px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Clear all</button>
-          ) : (
-            <button onClick={() => { clearAll(); setConfirmClear(false); }} style={{ background: C.danger, border: "none", color: "#fff", borderRadius: 999, padding: "8px 15px", fontSize: 13, fontWeight: 600 }}>Confirm clear</button>
-          ))}
+          {/* single tap — undo toast restores the list */}
+          {items.length > 0 && (
+            <button onClick={clearAll} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 15px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Clear all</button>
+          )}
         </div>
       </div>
 
@@ -2877,7 +3026,7 @@ function ShopRow({ item, toggle, remove }) {
 
 /* ---------- add / edit recipe ---------- */
 
-function EditPage({ recipe, settings, onCancel, onSave }) {
+function EditPage({ recipe, settings, knownCategories = CATEGORIES, onCancel, onSave }) {
   const [title, setTitle] = useState(recipe?.title || "");
   const [category, setCategory] = useState(recipe?.category || "Weeknight");
   const [time, setTime] = useState(recipe?.time || "");
@@ -2928,7 +3077,7 @@ function EditPage({ recipe, settings, onCancel, onSave }) {
     onSave({
       id: recipe?.id || uid(),
       title: title.trim(),
-      category,
+      category: category.trim() || "Other",
       time: time.trim(),
       baseServings: Math.max(1, parseInt(servings, 10) || 1),
       ingredients,
@@ -3048,9 +3197,17 @@ function EditPage({ recipe, settings, onCancel, onSave }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
         <Field label="Category">
-          <select value={category} onChange={(e) => setCategory(e.target.value)} style={inputStyle()}>
-            {(CATEGORIES.includes(category) ? CATEGORIES : [category, ...CATEGORIES]).map((c) => <option key={c}>{c}</option>)}
-          </select>
+          {/* free text with suggestions — type anything and it becomes a category */}
+          <input
+            list="kitchen-categories"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            placeholder="e.g. Weeknight, or your own"
+            style={inputStyle()}
+          />
+          <datalist id="kitchen-categories">
+            {knownCategories.map((c) => <option key={c} value={c} />)}
+          </datalist>
         </Field>
         <Field label="Serves">
           <input type="number" min="1" max="40" value={servings} onChange={(e) => setServingsField(e.target.value)} style={inputStyle()} />
@@ -3129,6 +3286,28 @@ const inputStyle = () => ({
 function applyOven(text, oven) {
   if (oven !== "conventional") return text;
   return text.replace(/(\d{2,3})\s*°C/g, (m, t) => `${parseInt(t, 10) + 20}°C`);
+}
+
+/* ---------- plain-text recipe (share sheet / clipboard) ---------- */
+
+function recipeToText(recipe, factor, scaleLabel, settings) {
+  const meta = [recipe.category, recipe.time, scaleLabel].filter(Boolean).join(" · ");
+  const ing = recipe.ingredients
+    .map((i) => (i.amount != null ? `${formatAmount(i.amount * factor, i.unit)}${i.unit ? ` ${i.unit}` : ""} ${i.name}` : i.name))
+    .join("\n");
+  const steps = recipe.steps.map((s, n) => `${n + 1}. ${applyOven(s, settings.oven)}`).join("\n");
+  return [
+    recipe.title,
+    meta,
+    "",
+    "INGREDIENTS",
+    ing,
+    "",
+    "METHOD",
+    steps,
+    recipe.notes ? `\nNote: ${recipe.notes}` : "",
+    "\n— from The Kitchen",
+  ].filter((p) => p !== null).join("\n");
 }
 
 /* ---------- cooking tips ---------- */
@@ -3377,11 +3556,13 @@ function TipsPage({ kitchenTimers, setKitchenTimers, myTips, onAddTip, onRemoveT
 
 /* ---------- settings ---------- */
 
-function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, onExport, onImport, restoreStarters, resetAll }) {
+function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry = [], onAddStaple, onRemoveStaple, onExport, onImport, restoreStarters, resetAll }) {
   const [panForm, setPanForm] = useState(null); // null | {name, shape, dims…}
   const [confirmPanDel, setConfirmPanDel] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [stapleText, setStapleText] = useState("");
   const serveOptions = [null, 1, 2, 3, 4, 5, 6, 8, 10];
+  const addStaple = () => { onAddStaple(stapleText); setStapleText(""); };
 
   return (
     <div style={{ maxWidth: 620 }}>
@@ -3618,6 +3799,61 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, onExpor
               <button onClick={() => setPanForm(null)} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 13 }}>Cancel</button>
             </div>
           </div>
+        )}
+      </section>
+
+      <section style={settingsCard()}>
+        <h2 style={sectionHead()}>Pantry staples</h2>
+        <p style={settingsHint()}>
+          Things you always have in. Anything on this list is quietly left off the shopping list when you send a recipe or a whole week over — you can still add one by hand any time, and typing it into the shopping list always wins.
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: pantry.length ? 12 : 0 }}>
+          {pantry.map((s) => (
+            <span key={s} style={{ display: "inline-flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: 999, background: C.bg, overflow: "hidden" }}>
+              <span style={{ padding: "7px 6px 7px 14px", fontSize: 13, fontWeight: 600, color: C.ink }}>{s}</span>
+              <button
+                onClick={() => onRemoveStaple(s)}
+                aria-label={`Remove ${s} from pantry staples`}
+                style={{ background: "none", border: "none", padding: "7px 12px 7px 6px", fontSize: 15, color: C.danger }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          {!pantry.length && <span style={{ fontSize: 13, color: C.faint }}>Nothing marked yet — every ingredient goes on the list.</span>}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <input
+            value={stapleText}
+            onChange={(e) => setStapleText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addStaple()}
+            placeholder="Add a staple — e.g. olive oil"
+            style={{ flex: 1, padding: "9px 13px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, fontSize: 14 }}
+          />
+          <button
+            onClick={addStaple}
+            style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 10, padding: "0 18px", fontSize: 13.5, fontWeight: 600 }}
+          >
+            Add
+          </button>
+        </div>
+
+        {SUGGESTED_STAPLES.some((s) => !pantry.includes(s)) && (
+          <>
+            <div style={{ fontSize: 12, color: C.faint, marginBottom: 6 }}>Common ones — tap to add:</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {SUGGESTED_STAPLES.filter((s) => !pantry.includes(s)).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => onAddStaple(s)}
+                  style={{ background: "none", border: `1px dashed ${C.line}`, borderRadius: 999, padding: "5px 12px", fontSize: 12.5, color: C.inkSoft, fontWeight: 500 }}
+                >
+                  + {s}
+                </button>
+              ))}
+            </div>
+          </>
         )}
       </section>
 
