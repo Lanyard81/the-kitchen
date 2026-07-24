@@ -4104,8 +4104,62 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
 
   const last = idx === steps.length - 1;
 
+  const goNext = () => setIdx((i) => Math.min(steps.length - 1, i + 1));
+  const goPrev = () => setIdx((i) => Math.max(0, i - 1));
+
+  /* keyboard: arrows step through, Escape leaves, Tab stays inside the overlay */
+  const shellRef = useRef(null);
+  useEffect(() => {
+    const prevFocus = document.activeElement;
+    if (shellRef.current) shellRef.current.focus();
+
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+      if (e.key === "ArrowRight") { e.preventDefault(); goNext(); return; }
+      if (e.key === "ArrowLeft") { e.preventDefault(); goPrev(); return; }
+      if (e.key !== "Tab" || !shellRef.current) return;
+      const focusable = shellRef.current.querySelectorAll(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const lastEl = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); lastEl.focus(); }
+      else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); first.focus(); }
+    };
+
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (prevFocus && prevFocus.focus) prevFocus.focus();
+    };
+  }, [steps.length, onClose]);
+
+  /* swipe: horizontal only, so the ingredients panel still scrolls normally */
+  const touch = useRef(null);
+  const onTouchStart = (e) => {
+    const t = e.touches[0];
+    touch.current = { x: t.clientX, y: t.clientY };
+  };
+  const onTouchEnd = (e) => {
+    if (!touch.current) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touch.current.x;
+    const dy = t.clientY - touch.current.y;
+    touch.current = null;
+    if (Math.abs(dx) < 55 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx < 0) goNext(); else goPrev();
+  };
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.ink, zIndex: 60, display: "flex", flexDirection: "column", fontFamily: "'Instrument Sans', system-ui, sans-serif" }}>
+    <div
+      ref={shellRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Cooking ${recipe.title}, step ${idx + 1} of ${steps.length}`}
+      style={{ position: "fixed", inset: 0, background: C.bg, color: C.ink, zIndex: 60, display: "flex", flexDirection: "column", fontFamily: "'Instrument Sans', system-ui, sans-serif", outline: "none" }}
+    >
       <div style={{ background: C.green, color: C.onPrimary, padding: "calc(14px + env(safe-area-inset-top)) 20px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 17, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{recipe.title}</div>
@@ -4148,7 +4202,11 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
         </div>
       )}
 
-      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 24px", maxWidth: 720, margin: "0 auto", width: "100%" }}>
+      <div
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 24px", maxWidth: 720, margin: "0 auto", width: "100%" }}
+      >
         <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.mustardSoft, color: C.accentText, display: "grid", placeItems: "center", fontWeight: 800, fontSize: 19, marginBottom: 18, fontFamily: "'Bricolage Grotesque'" }}>
           {idx + 1}
         </div>
@@ -4206,7 +4264,7 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
 
       <div style={{ display: "flex", gap: 10, padding: "16px 20px calc(16px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, background: C.card }}>
         <button
-          onClick={() => setIdx((i) => Math.max(0, i - 1))}
+          onClick={goPrev}
           disabled={idx === 0}
           style={{ flex: 1, background: C.bg, border: `1px solid ${C.line}`, color: idx === 0 ? C.disabledText : C.ink, borderRadius: 14, padding: "15px 10px", fontSize: 15, fontWeight: 600 }}
         >
@@ -4214,7 +4272,7 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
         </button>
         {!last ? (
           <button
-            onClick={() => setIdx((i) => Math.min(steps.length - 1, i + 1))}
+            onClick={goNext}
             style={{ flex: 2, background: C.green, color: C.onPrimary, border: "none", borderRadius: 14, padding: "15px 10px", fontSize: 15, fontWeight: 700 }}
           >
             Next step →
