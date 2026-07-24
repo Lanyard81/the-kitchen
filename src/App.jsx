@@ -1077,13 +1077,90 @@ let C = getTheme("olive", "light");
 
 const CATEGORIES = ["Weeknight", "Pasta", "Curry", "Soup", "Roast", "Salad", "Sides", "Stir-fry", "Casserole", "Cakes", "Slices", "Biscuits & Cookies", "Tarts & Pastries", "Breads", "Loaves, Muffins & Other", "Other"];
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const emptyPlan = () => Object.fromEntries(DAYS.map((d) => [d, []]));
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/* ---------- planner dates & meal slots ----------
+
+   The plan is keyed by ISO date, each holding lunch and dinner:
+     { "2026-07-20": { lunch: [entry], dinner: [entry] } }
+   Weeks are a view over that, so past weeks simply stay in the object
+   instead of being overwritten. Dates are built in local time throughout —
+   using Date.parse on a bare "YYYY-MM-DD" would land on UTC and shift the
+   day for anyone east of Greenwich, which is everyone this app is for. */
+
+const SLOTS = [["lunch", "Lunch"], ["dinner", "Dinner"]];
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const parseISO = (s) => { const [y, m, d] = String(s).split("-").map(Number); return new Date(y, m - 1, d); };
+const addDays = (d, n) => { const c = new Date(d.getFullYear(), d.getMonth(), d.getDate()); c.setDate(c.getDate() + n); return c; };
+const mondayOf = (d) => addDays(d, -((d.getDay() + 6) % 7));
+const thisMonday = () => isoDate(mondayOf(new Date()));
+const weekDates = (mondayISO) => { const m = parseISO(mondayISO); return Array.from({ length: 7 }, (_, i) => isoDate(addDays(m, i))); };
+const dayNameOf = (iso) => DAYS[(parseISO(iso).getDay() + 6) % 7];
+const shortDate = (iso) => { const d = parseISO(iso); return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`; };
+
+const weekLabel = (mondayISO) => {
+  const a = parseISO(mondayISO), b = addDays(a, 6);
+  const sameYear = a.getFullYear() === b.getFullYear();
+  if (a.getMonth() === b.getMonth() && sameYear) return `${a.getDate()}–${b.getDate()} ${MONTHS_SHORT[b.getMonth()]} ${b.getFullYear()}`;
+  if (sameYear) return `${a.getDate()} ${MONTHS_SHORT[a.getMonth()]} – ${b.getDate()} ${MONTHS_SHORT[b.getMonth()]} ${b.getFullYear()}`;
+  return `${a.getDate()} ${MONTHS_SHORT[a.getMonth()]} ${a.getFullYear()} – ${b.getDate()} ${MONTHS_SHORT[b.getMonth()]} ${b.getFullYear()}`;
+};
+
+const relativeWeek = (mondayISO) => {
+  const diff = Math.round((parseISO(mondayISO) - parseISO(thisMonday())) / 604800000);
+  if (diff === 0) return "This week";
+  if (diff === 1) return "Next week";
+  if (diff === -1) return "Last week";
+  return diff > 0 ? `In ${diff} weeks` : `${-diff} weeks ago`;
+};
+
+const emptyDay = () => ({ lunch: [], dinner: [] });
+const dayAt = (plan, iso) => {
+  const d = plan[iso];
+  if (!d) return emptyDay();
+  return { lunch: Array.isArray(d.lunch) ? d.lunch : [], dinner: Array.isArray(d.dinner) ? d.dinner : [] };
+};
+const dayCount = (plan, iso) => { const d = dayAt(plan, iso); return d.lunch.length + d.dinner.length; };
+/* drop days that have emptied out, so the stored plan doesn't grow forever */
+const pruneDay = (plan, iso, day) => {
+  const next = { ...plan };
+  if (!day.lunch.length && !day.dinner.length) delete next[iso];
+  else next[iso] = day;
+  return next;
+};
+
+/* v1 plans were keyed by weekday name with a single flat list per day.
+   Those entries were all dinners, and the only week they could have meant
+   is the one the cook was looking at — so they land on the current week. */
+const migratePlan = (old) => {
+  if (!old || typeof old !== "object" || Array.isArray(old)) return {};
+  if (Object.keys(old).some((k) => ISO_DATE_RE.test(k))) {
+    return Object.fromEntries(Object.keys(old).filter((k) => ISO_DATE_RE.test(k)).map((k) => [k, dayAt(old, k)]));
+  }
+  const monday = parseISO(thisMonday());
+  const out = {};
+  DAYS.forEach((d, i) => {
+    const entries = Array.isArray(old[d]) ? old[d] : [];
+    if (entries.length) out[isoDate(addDays(monday, i))] = { lunch: [], dinner: entries };
+  });
+  return out;
+};
+
+/* templates stay weekday-relative — a template is "a typical week", not a dated one */
+const migrateTemplatePlan = (tp) => Object.fromEntries(DAYS.map((d) => {
+  const v = tp && tp[d];
+  if (Array.isArray(v)) return [d, { lunch: [], dinner: v }];
+  return [d, { lunch: Array.isArray(v?.lunch) ? v.lunch : [], dinner: Array.isArray(v?.dinner) ? v.dinner : [] }];
+}));
 
 /* ---------- app shell ---------- */
 
 export default function TheKitchen() {
   const [recipes, setRecipes] = useState(null);
-  const [plan, setPlan] = useState(emptyPlan());
+  const [plan, setPlan] = useState({});
   const [shop, setShop] = useState([]);
   const [favs, setFavs] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -1123,11 +1200,18 @@ export default function TheKitchen() {
         catch { return fallback; }
       };
       setRecipes(await load(K_RECIPES, SEED_RECIPES));
-      const p = await load(K_PLAN, emptyPlan());
-      setPlan({ ...emptyPlan(), ...p });
+      const rawPlan = await load(K_PLAN, {});
+      const p = migratePlan(rawPlan);
+      setPlan(p);
+      // persist the migrated shape once, but write straight to storage rather than
+      // through save() — this isn't a user edit and must not schedule a cloud push
+      // that could race ahead of the first pull.
+      if (JSON.stringify(rawPlan) !== JSON.stringify(p)) {
+        storageSet(K_PLAN, JSON.stringify(p)).catch(() => {});
+      }
       setShop(await load(K_SHOP, []));
       setFavs(await load(K_FAVS, []));
-      setTemplates(await load(K_TEMPLATES, []));
+      setTemplates((await load(K_TEMPLATES, [])).map((t) => ({ ...t, plan: migrateTemplatePlan(t.plan) })));
       setMyTips(await load(K_MYTIPS, []));
       setMyPans(await load(K_MYPANS, []));
       setBakePlans(await load(K_BAKEPLANS, []));
@@ -1215,7 +1299,12 @@ export default function TheKitchen() {
     const gone = recipes.find((r) => r.id === id);
     persistRecipes(recipes.filter((r) => r.id !== id));
     persistFavs(favs.filter((f) => f !== id));
-    persistPlan(Object.fromEntries(DAYS.map((d) => [d, plan[d].filter((e) => e.recipeId !== id)])));
+    persistPlan(Object.entries(plan).reduce((acc, [iso, day]) => {
+      const d = dayAt(plan, iso);
+      const kept = { lunch: d.lunch.filter((e) => e.recipeId !== id), dinner: d.dinner.filter((e) => e.recipeId !== id) };
+      if (kept.lunch.length || kept.dinner.length) acc[iso] = kept;
+      return acc;
+    }, {}));
     setView({ page: "list" });
     showUndo(`Deleted “${gone ? gone.title : "recipe"}”`, () => {
       persistRecipes(prev.recipes);
@@ -1257,11 +1346,12 @@ export default function TheKitchen() {
     setToast(`${recipe.title} (${label}) added to shopping list${stapleNote(skipped)}`);
   };
 
-  const addWeekToShop = () => {
+  const addWeekToShop = (dates) => {
     const items = [];
     let count = 0;
-    for (const d of DAYS) {
-      for (const e of plan[d]) {
+    for (const iso of dates) {
+      const day = dayAt(plan, iso);
+      for (const e of [...day.lunch, ...day.dinner]) {
         if (e.leftover) continue;
         const r = recipes.find((x) => x.id === e.recipeId);
         if (!r) continue;
@@ -1270,15 +1360,18 @@ export default function TheKitchen() {
         for (const i of r.ingredients) items.push({ ...i, amount: i.amount != null ? i.amount * factor : null });
       }
     }
-    if (!count) { setToast("The planner is empty — add some meals first"); return; }
+    if (!count) { setToast("Nothing planned this week — add some meals first"); return; }
     const skipped = mergeIntoShop(items);
     setToast(`Ingredients for ${count} meal${count > 1 ? "s" : ""} added to shopping list${stapleNote(skipped)}`);
     setTab("shopping");
   };
 
-  const addToPlan = (day, recipeId, servings, leftover = false) => {
-    persistPlan({ ...plan, [day]: [...plan[day], { id: uid(), recipeId, servings, ...(leftover ? { leftover: true } : {}) }] });
-    setToast(leftover ? `Leftovers night added to ${day} — nothing extra to buy` : `Added to ${day}`);
+  const addToPlan = (iso, slot, recipeId, servings, leftover = false) => {
+    const day = dayAt(plan, iso);
+    const entry = { id: uid(), recipeId, servings, ...(leftover ? { leftover: true } : {}) };
+    persistPlan({ ...plan, [iso]: { ...day, [slot]: [...day[slot], entry] } });
+    const where = `${dayNameOf(iso)} ${shortDate(iso)} ${slot}`;
+    setToast(leftover ? `Leftovers added to ${where} — nothing extra to buy` : `Added to ${where}`);
   };
 
   const sendBakePlanToShop = (pl) => {
@@ -1296,14 +1389,32 @@ export default function TheKitchen() {
 
   /* --- week templates --- */
 
-  const saveTemplate = (name) => {
-    persistTemplates([...templates, { id: uid(), name, plan }]);
+  /* a template is a shape of week, not a dated one: store it by weekday,
+     read it off whichever week is on screen, and write it back the same way */
+  const saveTemplate = (name, dates) => {
+    const tplPlan = Object.fromEntries(dates.map((iso, i) => {
+      const d = dayAt(plan, iso);
+      return [DAYS[i], { lunch: d.lunch, dinner: d.dinner }];
+    }));
+    persistTemplates([...templates, { id: uid(), name, plan: tplPlan }]);
     setToast(`Saved template “${name}”`);
   };
-  const applyTemplate = (tpl) => {
-    const fresh = Object.fromEntries(DAYS.map((d) => [d, (tpl.plan[d] || []).map((e) => ({ ...e, id: uid() }))]));
-    persistPlan(fresh);
-    setToast(`Applied “${tpl.name}” to this week`);
+
+  const applyTemplate = (tpl, dates) => {
+    const prev = plan;
+    const tplPlan = migrateTemplatePlan(tpl.plan);
+    const next = { ...plan };
+    dates.forEach((iso, i) => {
+      const src = tplPlan[DAYS[i]];
+      const day = {
+        lunch: src.lunch.map((e) => ({ ...e, id: uid() })),
+        dinner: src.dinner.map((e) => ({ ...e, id: uid() })),
+      };
+      if (day.lunch.length || day.dinner.length) next[iso] = day;
+      else delete next[iso];
+    });
+    persistPlan(next);
+    showUndo(`Applied “${tpl.name}”`, () => persistPlan(prev));
   };
   const deleteTemplate = (id) => persistTemplates(templates.filter((t) => t.id !== id));
 
@@ -1319,7 +1430,7 @@ export default function TheKitchen() {
   const applyRemoteData = (d) => {
     if (!d || !Array.isArray(d.recipes)) return;
     persistRecipes(d.recipes);
-    persistPlan({ ...emptyPlan(), ...(d.plan || {}) });
+    persistPlan(migratePlan(d.plan));
     persistShop(Array.isArray(d.shop) ? d.shop : []);
     persistFavs(Array.isArray(d.favs) ? d.favs : []);
     persistTemplates(Array.isArray(d.templates) ? d.templates : []);
@@ -1419,7 +1530,7 @@ export default function TheKitchen() {
         const d = JSON.parse(reader.result);
         if (!Array.isArray(d.recipes)) throw new Error("bad backup");
         persistRecipes(d.recipes);
-        persistPlan({ ...emptyPlan(), ...(d.plan || {}) });
+        persistPlan(migratePlan(d.plan));
         persistShop(Array.isArray(d.shop) ? d.shop : []);
         persistFavs(Array.isArray(d.favs) ? d.favs : []);
         persistTemplates(Array.isArray(d.templates) ? d.templates : []);
@@ -1447,7 +1558,8 @@ export default function TheKitchen() {
   }
 
   const current = view.id ? recipes.find((r) => r.id === view.id) : null;
-  const plannedCount = DAYS.reduce((a, d) => a + plan[d].length, 0) + bakePlans.length;
+  // the badge speaks for the current week, not every week ever planned
+  const plannedCount = weekDates(thisMonday()).reduce((a, iso) => a + dayCount(plan, iso), 0) + bakePlans.length;
   const unchecked = shop.filter((s) => !s.checked).length;
 
   return (
@@ -1560,7 +1672,7 @@ export default function TheKitchen() {
             onDuplicate={() => duplicateRecipe(current)}
             onToast={setToast}
             onAddToShop={(factor, label) => addRecipeToShop(current, factor, label)}
-            onAddToPlan={(day, servings) => addToPlan(day, current.id, servings)}
+            onAddToPlan={(iso, slot, servings) => addToPlan(iso, slot, current.id, servings)}
             onPatch={(patch) => patchRecipe(current.id, patch)}
             onCooked={() => markCooked(current.id)}
           />
@@ -1585,17 +1697,23 @@ export default function TheKitchen() {
             onSaveTemplate={saveTemplate}
             onApplyTemplate={applyTemplate}
             onDeleteTemplate={deleteTemplate}
-            setEntryServings={(day, entryId, delta) => {
+            setEntryServings={(iso, slot, entryId, delta) => {
+              const day = dayAt(plan, iso);
               persistPlan({
                 ...plan,
-                [day]: plan[day].map((e) => (e.id === entryId ? { ...e, servings: Math.min(40, Math.max(1, e.servings + delta)) } : e)),
+                [iso]: { ...day, [slot]: day[slot].map((e) => (e.id === entryId ? { ...e, servings: Math.min(40, Math.max(1, e.servings + delta)) } : e)) },
               });
             }}
-            removeEntry={(day, entryId) => persistPlan({ ...plan, [day]: plan[day].filter((e) => e.id !== entryId) })}
+            removeEntry={(iso, slot, entryId) => {
+              const day = dayAt(plan, iso);
+              persistPlan(pruneDay(plan, iso, { ...day, [slot]: day[slot].filter((e) => e.id !== entryId) }));
+            }}
             addEntry={addToPlan}
-            clearWeek={() => {
+            clearWeek={(dates) => {
               const prev = plan;
-              persistPlan(emptyPlan());
+              const next = { ...plan };
+              dates.forEach((iso) => delete next[iso]);
+              persistPlan(next);
               showUndo("Week cleared", () => persistPlan(prev));
             }}
             addWeekToShop={addWeekToShop}
@@ -1635,7 +1753,7 @@ export default function TheKitchen() {
             }}
             resetAll={() => {
               persistRecipes(SEED_RECIPES);
-              persistPlan(emptyPlan());
+              persistPlan({});
               persistShop([]);
               persistFavs([]);
               persistTemplates([]);
@@ -1982,6 +2100,8 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
   const [pan, setPan] = useState(recipe.basePan || null);
   const [customPan, setCustomPan] = useState(false);
   const [pickDay, setPickDay] = useState(false);
+  const [planSlot, setPlanSlot] = useState("dinner");
+  const [planWeek, setPlanWeek] = useState(thisMonday);
   const [cooking, setCooking] = useState(false);
   const [ticked, setTicked] = useState(() => new Set());
 
@@ -2216,16 +2336,38 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
           </button>
         ) : (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            {DAYS.map((d) => (
+            {SLOTS.map(([id, label]) => (
               <button
-                key={d}
-                onClick={() => { onAddToPlan(d, kind === "serves" ? servings : factor); setPickDay(false); }}
-                style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 13px", fontSize: 12.5, fontWeight: 500 }}
+                key={id}
+                onClick={() => setPlanSlot(id)}
+                style={{
+                  background: planSlot === id ? C.green : C.card,
+                  color: planSlot === id ? C.onPrimary : C.inkSoft,
+                  border: `1px solid ${planSlot === id ? C.green : C.line}`,
+                  borderRadius: 999, padding: "7px 13px", fontSize: 12.5, fontWeight: 600,
+                }}
               >
-                {d.slice(0, 3)}
+                {label}
               </button>
             ))}
-            <button onClick={() => setPickDay(false)} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 12.5, padding: 6 }}>Cancel</button>
+            <span style={{ color: C.faint, fontSize: 12.5 }}>on</span>
+            {weekDates(planWeek).map((iso) => (
+              <button
+                key={iso}
+                onClick={() => { onAddToPlan(iso, planSlot, kind === "serves" ? servings : factor); setPickDay(false); }}
+                style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 11px", fontSize: 12.5, fontWeight: 500, color: C.ink }}
+              >
+                {dayNameOf(iso).slice(0, 3)} {parseISO(iso).getDate()}
+              </button>
+            ))}
+            <button
+              onClick={() => setPlanWeek((w) => isoDate(addDays(parseISO(w), 7)))}
+              aria-label="Next week"
+              style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 11px", fontSize: 12.5, color: C.inkSoft }}
+            >
+              {relativeWeek(planWeek) === "This week" ? "Next week →" : "→"}
+            </button>
+            <button onClick={() => { setPickDay(false); setPlanWeek(thisMonday()); }} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 12.5, padding: 6 }}>Cancel</button>
           </div>
         )}
         <button
@@ -2489,10 +2631,18 @@ function Stepper({ label, onClick, disabled }) {
 
 function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBakePlanToShop, onToast, templates, onSaveTemplate, onApplyTemplate, onDeleteTemplate, setEntryServings, removeEntry, addEntry, clearWeek, addWeekToShop, openRecipe }) {
   const [mode, setMode] = useState("dinner"); // dinner | bake
-  const [addingDay, setAddingDay] = useState(null);
+  const [addingAt, setAddingAt] = useState(null); // `${iso}|${slot}` | null
   const [savingTpl, setSavingTpl] = useState(false);
   const [tplName, setTplName] = useState("");
-  const total = DAYS.reduce((a, d) => a + plan[d].length, 0);
+  const [weekStart, setWeekStart] = useState(thisMonday);
+  const dates = weekDates(weekStart);
+  const total = dates.reduce((a, iso) => a + dayCount(plan, iso), 0);
+  const today = isoDate(new Date());
+  // functional update: several quick taps must step several weeks, not one
+  const shiftWeek = (n) => {
+    setWeekStart((w) => isoDate(addDays(parseISO(w), n * 7)));
+    setAddingAt(null);
+  };
 
   return (
     <div>
@@ -2526,21 +2676,52 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
 
       {mode === "dinner" && (
       <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-        <h1 style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 28, margin: 0 }}>This week</h1>
-        <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ minWidth: 0 }}>
+          <h1 style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 28, margin: 0 }}>{relativeWeek(weekStart)}</h1>
+          <div style={{ fontSize: 13, color: C.inkSoft, marginTop: 2 }}>{weekLabel(weekStart)}</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
-            onClick={addWeekToShop}
+            onClick={() => addWeekToShop(dates)}
             disabled={!total}
             style={{ background: total ? C.mustard : C.line, color: total ? C.onAccent : C.disabledText, border: "none", borderRadius: 999, padding: "9px 18px", fontWeight: 600, fontSize: 13.5, cursor: total ? "pointer" : "default" }}
           >
             Send week to shopping list
           </button>
-          {/* single tap — undo toast restores the week */}
+          {/* single tap — undo toast restores the week, and only this week's dates are touched */}
           {total > 0 && (
-            <button onClick={clearWeek} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Clear week</button>
+            <button onClick={() => clearWeek(dates)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Clear week</button>
           )}
         </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+        <button
+          onClick={() => shiftWeek(-1)}
+          aria-label="Previous week"
+          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 14, fontWeight: 600, color: C.ink }}
+        >
+          ←
+        </button>
+        {weekStart !== thisMonday() && (
+          <button
+            onClick={() => { setWeekStart(thisMonday()); setAddingAt(null); }}
+            style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}
+          >
+            Today
+          </button>
+        )}
+        <button
+          onClick={() => shiftWeek(1)}
+          aria-label="Next week"
+          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 14, fontWeight: 600, color: C.ink }}
+        >
+          →
+        </button>
+        <span style={{ fontSize: 12.5, color: C.faint, marginLeft: 4 }}>
+          {total ? `${total} meal${total > 1 ? "s" : ""} planned` : "Nothing planned"}
+        </span>
       </div>
 
       <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
@@ -2549,8 +2730,8 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
           {templates.map((t) => (
             <span key={t.id} style={{ display: "inline-flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: 999, background: C.bg, overflow: "hidden" }}>
               <button
-                onClick={() => onApplyTemplate(t)}
-                title="Apply this template to the week"
+                onClick={() => onApplyTemplate(t, dates)}
+                title="Apply this template to the week on screen"
                 style={{ background: "none", border: "none", padding: "7px 6px 7px 14px", fontSize: 13, fontWeight: 600, color: C.ink }}
               >
                 {t.name}
@@ -2578,12 +2759,12 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
                 autoFocus
                 value={tplName}
                 onChange={(e) => setTplName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && tplName.trim()) { onSaveTemplate(tplName.trim()); setTplName(""); setSavingTpl(false); } }}
+                onKeyDown={(e) => { if (e.key === "Enter" && tplName.trim()) { onSaveTemplate(tplName.trim(), dates); setTplName(""); setSavingTpl(false); } }}
                 placeholder="e.g. Normal week"
                 style={{ padding: "7px 12px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.bg, fontSize: 13, width: 150 }}
               />
               <button
-                onClick={() => { if (tplName.trim()) { onSaveTemplate(tplName.trim()); setTplName(""); setSavingTpl(false); } }}
+                onClick={() => { if (tplName.trim()) { onSaveTemplate(tplName.trim(), dates); setTplName(""); setSavingTpl(false); } }}
                 style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: 600 }}
               >
                 Save
@@ -2593,69 +2774,101 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
           )}
         </div>
         {templates.length > 0 && (
-          <div style={{ fontSize: 12, color: C.faint, marginTop: 8 }}>Tap a template to apply it — it replaces whatever's currently planned.</div>
+          <div style={{ fontSize: 12, color: C.faint, marginTop: 8 }}>Tap a template to lay it over the week on screen — other weeks are left alone.</div>
         )}
       </div>
 
+      <StaleFavourites recipes={recipes} plan={plan} dates={dates} openRecipe={openRecipe} />
+
       <div style={{ display: "grid", gap: 12 }}>
-        {DAYS.map((day) => (
-          <div key={day} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 16px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: plan[day].length || addingDay === day ? 10 : 0 }}>
-              <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 600, fontSize: 16 }}>{day}</div>
-              <button
-                onClick={() => setAddingDay(addingDay === day ? null : day)}
-                style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "5px 13px", fontSize: 12.5, color: C.inkSoft, fontWeight: 500 }}
-              >
-                {addingDay === day ? "Cancel" : "+ Add meal"}
-              </button>
-            </div>
+        {dates.map((iso) => {
+          const day = dayAt(plan, iso);
+          const isToday = iso === today;
+          return (
+            <div
+              key={iso}
+              style={{
+                background: C.card,
+                border: `1px solid ${isToday ? C.green : C.line}`,
+                borderRadius: 14, padding: "14px 16px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 600, fontSize: 16, color: C.ink }}>{dayNameOf(iso)}</span>
+                <span style={{ fontSize: 13, color: C.inkSoft }}>{shortDate(iso)}</span>
+                {isToday && (
+                  <span style={{ background: C.green, color: C.onPrimary, borderRadius: 999, padding: "1px 9px", fontSize: 11, fontWeight: 700 }}>Today</span>
+                )}
+              </div>
 
-            {addingDay === day && (
-              <DayRecipePicker
-                recipes={recipes}
-                defaultServes={settings.defaultServes}
-                onPick={(recipeId, servings) => { addEntry(day, recipeId, servings); setAddingDay(null); }}
-              />
-            )}
+              {SLOTS.map(([slot, slotLabel]) => {
+                const entries = day[slot];
+                const key = `${iso}|${slot}`;
+                const adding = addingAt === key;
+                return (
+                  <div key={slot} style={{ borderTop: `1px solid ${C.line}`, paddingTop: 8, marginTop: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 11.5, letterSpacing: 0.8, textTransform: "uppercase", fontWeight: 700, color: C.headMut }}>{slotLabel}</span>
+                      <button
+                        onClick={() => setAddingAt(adding ? null : key)}
+                        style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 12px", fontSize: 12.5, color: C.inkSoft, fontWeight: 500 }}
+                      >
+                        {adding ? "Cancel" : "+ Add"}
+                      </button>
+                    </div>
 
-            {plan[day].map((e) => {
-              const r = recipes.find((x) => x.id === e.recipeId);
-              if (!r) return null;
-              const kind = scalingKind(r);
-              return (
-                <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${C.line}`, flexWrap: "wrap" }}>
-                  <button onClick={() => openRecipe(r.id)} style={{ background: "none", border: "none", padding: 0, fontSize: 15, fontWeight: 600, color: e.leftover ? C.inkSoft : C.ink, textAlign: "left", flex: "1 1 160px" }}>
-                    {e.leftover ? "🍲 " : ""}{r.title}
-                    {e.leftover && <span style={{ display: "block", fontSize: 11.5, fontWeight: 500, color: C.faint, marginTop: 1 }}>Leftovers — already on the shopping list from the night it's cooked</span>}
-                  </button>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    {kind !== "pan" && <MiniStep label="−" disabled={e.servings <= 1} onClick={() => setEntryServings(day, e.id, -1)} />}
-                    <span style={{ fontSize: 13.5, color: C.inkSoft, minWidth: 64, textAlign: "center" }}>
-                      {kind === "serves"
-                        ? `serves ${e.servings}`
-                        : kind === "batch"
-                          ? `×${fmtFactor(e.servings)} batch`
-                          : Math.abs(e.servings - 1) < 0.001 ? "as written" : `×${Math.round(e.servings * 100) / 100}`}
-                    </span>
-                    {kind !== "pan" && <MiniStep label="+" disabled={e.servings >= 40} onClick={() => setEntryServings(day, e.id, 1)} />}
-                    <button onClick={() => removeEntry(day, e.id)} aria-label="Remove meal" style={{ background: "none", border: "none", color: C.danger, fontSize: 16, padding: "4px 8px" }}>×</button>
+                    {adding && (
+                      <DayRecipePicker
+                        recipes={recipes}
+                        defaultServes={settings.defaultServes}
+                        onPick={(recipeId, servings) => { addEntry(iso, slot, recipeId, servings); setAddingAt(null); }}
+                      />
+                    )}
+
+                    {entries.map((e) => {
+                      const r = recipes.find((x) => x.id === e.recipeId);
+                      if (!r) return null;
+                      const kind = scalingKind(r);
+                      return (
+                        <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", flexWrap: "wrap" }}>
+                          <button onClick={() => openRecipe(r.id)} style={{ background: "none", border: "none", padding: 0, fontSize: 15, fontWeight: 600, color: e.leftover ? C.inkSoft : C.ink, textAlign: "left", flex: "1 1 160px" }}>
+                            {e.leftover ? "🍲 " : ""}{r.title}
+                            {e.leftover && <span style={{ display: "block", fontSize: 11.5, fontWeight: 500, color: C.faint, marginTop: 1 }}>Leftovers — already on the shopping list from the meal it's cooked at</span>}
+                          </button>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            {kind !== "pan" && <MiniStep label="−" disabled={e.servings <= 1} onClick={() => setEntryServings(iso, slot, e.id, -1)} />}
+                            <span style={{ fontSize: 13.5, color: C.inkSoft, minWidth: 64, textAlign: "center" }}>
+                              {kind === "serves"
+                                ? `serves ${e.servings}`
+                                : kind === "batch"
+                                  ? `×${fmtFactor(e.servings)} batch`
+                                  : Math.abs(e.servings - 1) < 0.001 ? "as written" : `×${Math.round(e.servings * 100) / 100}`}
+                            </span>
+                            {kind !== "pan" && <MiniStep label="+" disabled={e.servings >= 40} onClick={() => setEntryServings(iso, slot, e.id, 1)} />}
+                            <button onClick={() => removeEntry(iso, slot, e.id)} aria-label="Remove meal" style={{ background: "none", border: "none", color: C.danger, fontSize: 16, padding: "4px 8px" }}>×</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    <LeftoverSuggestions
+                      iso={iso}
+                      slot={slot}
+                      plan={plan}
+                      recipes={recipes}
+                      household={settings.defaultServes}
+                      addEntry={addEntry}
+                    />
+
+                    {!entries.length && !adding && (
+                      <div style={{ fontSize: 13, color: C.faint, marginTop: 4 }}>Nothing planned</div>
+                    )}
                   </div>
-                </div>
-              );
-            })}
-            <LeftoverSuggestions
-              day={day}
-              plan={plan}
-              recipes={recipes}
-              household={settings.defaultServes}
-              addEntry={addEntry}
-            />
-
-            {!plan[day].length && addingDay !== day && (
-              <div style={{ fontSize: 13, color: C.faint, marginTop: 2 }}>Nothing planned</div>
-            )}
-          </div>
-        ))}
+                );
+              })}
+            </div>
+          );
+        })}
       </div>
       {!settings.defaultServes && total > 0 && (
         <div style={{ fontSize: 12.5, color: C.faint, marginTop: 12, lineHeight: 1.5 }}>
@@ -2668,27 +2881,31 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
   );
 }
 
-function LeftoverSuggestions({ day, plan, recipes, household, addEntry }) {
+/* Leftovers flow forward: dinner spare feeds the next day's lunch, and lunch
+   spare feeds the same day's dinner. */
+function LeftoverSuggestions({ iso, slot, plan, recipes, household, addEntry }) {
   if (!household) return null;
-  const di = DAYS.indexOf(day);
-  if (di <= 0) return null;
-  const prevDay = DAYS[di - 1];
 
-  const suggestions = plan[prevDay]
+  const source = slot === "lunch"
+    ? { iso: isoDate(addDays(parseISO(iso), -1)), slot: "dinner", label: "Last night's" }
+    : { iso, slot: "lunch", label: "Today's lunch —" };
+
+  const here = dayAt(plan, iso)[slot];
+  const suggestions = dayAt(plan, source.iso)[source.slot]
     .filter((e) => !e.leftover)
     .map((e) => ({ e, r: recipes.find((x) => x.id === e.recipeId) }))
     .filter(({ e, r }) => r && scalingKind(r) === "serves" && e.servings - household >= 1)
     .map(({ e, r }) => ({ r, spare: e.servings - household }))
-    .filter(({ r }) => !plan[day].some((x) => x.leftover && x.recipeId === r.id));
+    .filter(({ r }) => !here.some((x) => x.leftover && x.recipeId === r.id));
 
   if (!suggestions.length) return null;
 
   return (
-    <div style={{ marginTop: plan[day].length ? 6 : 2 }}>
+    <div style={{ marginTop: here.length ? 6 : 2 }}>
       {suggestions.map(({ r, spare }) => (
         <button
           key={r.id}
-          onClick={() => addEntry(day, r.id, spare, true)}
+          onClick={() => addEntry(iso, slot, r.id, spare, true)}
           style={{
             display: "block", width: "100%", textAlign: "left",
             background: C.mustardSoft, border: `1px dashed ${C.mustard}`,
@@ -2696,9 +2913,47 @@ function LeftoverSuggestions({ day, plan, recipes, household, addEntry }) {
             fontSize: 13, color: C.accentText, lineHeight: 1.45,
           }}
         >
-          🍲 <strong>{prevDay}'s {r.title}</strong> makes {spare} spare serve{spare > 1 ? "s" : ""} for your household of {household} — tap to plan leftovers tonight
+          🍲 <strong>{source.label} {r.title}</strong> makes {spare} spare serve{spare > 1 ? "s" : ""} for your household of {household} — tap to plan it here
         </button>
       ))}
+    </div>
+  );
+}
+
+/* Now that weeks are addressable, cooked timestamps are worth surfacing:
+   favourites and well-rated recipes that have quietly fallen out of rotation. */
+function StaleFavourites({ recipes, plan, dates, openRecipe }) {
+  const plannedIds = new Set(dates.flatMap((iso) => {
+    const d = dayAt(plan, iso);
+    return [...d.lunch, ...d.dinner].map((e) => e.recipeId);
+  }));
+
+  const stale = recipes
+    .filter((r) => (r.rating || 0) >= 4 && (r.cooked || []).length && !plannedIds.has(r.id))
+    .map((r) => ({ r, last: new Date(r.cooked[r.cooked.length - 1]) }))
+    .filter(({ last }) => (Date.now() - last.getTime()) / 86400000 >= 60)
+    .sort((a, b) => a.last - b.last)
+    .slice(0, 3);
+
+  if (!stale.length) return null;
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+      <div style={{ ...sectionHead(), marginBottom: 8 }}>Not made in a while</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {stale.map(({ r, last }) => (
+          <button
+            key={r.id}
+            onClick={() => openRecipe(r.id)}
+            style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: 500, color: C.ink }}
+          >
+            {r.title}
+            <span style={{ color: C.faint, fontWeight: 400 }}>
+              {" "}· not since {MONTHS_LONG[last.getMonth()]}{last.getFullYear() !== new Date().getFullYear() ? ` ${last.getFullYear()}` : ""}
+            </span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
