@@ -15,6 +15,7 @@ const K_MYTIPS = "becs-kitchen-mytips-v1";
 const K_MYPANS = "becs-kitchen-mypans-v1";
 const K_BAKEPLANS = "becs-kitchen-bakeplans-v1";
 const K_PANTRY = "becs-kitchen-pantry-v1";
+const K_PRICES = "becs-kitchen-prices-v1";
 
 const DEFAULT_SETTINGS = { defaultServes: null, oven: "fan", theme: "olive", mode: "auto", prepTicks: true };
 
@@ -1009,6 +1010,54 @@ const canonicalItemName = (name) => {
   return n.replace(/\s+/g, " ").trim();
 };
 
+/* ---------- price book ----------
+
+   Keyed by canonicalItemName so one "beef mince" entry covers every recipe,
+   matching how the shopping list already merges. Each entry is a price per
+   base unit: per kg, per litre, or each.
+
+   Only units that convert cleanly are costed. Anything else — "2 rashers",
+   an unknown unit, or an amount-less line like "salt, to taste" — is left
+   out of both the total and the coverage count, so the ratio never claims
+   to have priced something it couldn't. */
+
+const PRICE_UNITS = [["kg", "per kg"], ["l", "per litre"], ["each", "each"]];
+
+const toBaseAmount = (amount, unit) => {
+  const u = String(unit || "").toLowerCase();
+  if (u === "g") return { base: "kg", qty: amount / 1000 };
+  if (u === "kg") return { base: "kg", qty: amount };
+  if (u === "ml") return { base: "l", qty: amount / 1000 };
+  if (u === "l") return { base: "l", qty: amount };
+  if (u === "tsp") return { base: "l", qty: (amount * 5) / 1000 };
+  if (u === "tbsp") return { base: "l", qty: (amount * 20) / 1000 };
+  if (u === "cup" || u === "cups") return { base: "l", qty: (amount * 250) / 1000 };
+  if (u === "") return { base: "each", qty: amount };
+  return null;
+};
+
+const priceKey = (name) => canonicalItemName(name).toLowerCase();
+
+function recipeCost(recipe, factor, prices) {
+  if (!prices || !Object.keys(prices).length) return null;
+  let total = 0, priced = 0, costable = 0;
+  for (const i of recipe.ingredients) {
+    if (i.amount == null) continue;
+    const conv = toBaseAmount(i.amount * factor, i.unit);
+    if (!conv) continue;
+    costable++;
+    const p = prices[priceKey(i.name)];
+    if (!p || p.unit !== conv.base || !(p.price > 0)) continue;
+    priced++;
+    total += conv.qty * p.price;
+  }
+  if (!costable) return null;
+  return { total, priced, costable, coverage: priced / costable };
+}
+
+const COST_MIN_COVERAGE = 0.7;
+const money = (n) => `$${n.toFixed(2)}`;
+
 /* pantry staples: whole-word match so "salt" catches "sea salt" but not "salted butter" */
 const isPantryStaple = (name, pantry) => {
   if (!pantry || !pantry.length) return false;
@@ -1168,6 +1217,7 @@ export default function TheKitchen() {
   const [myPans, setMyPans] = useState([]);
   const [bakePlans, setBakePlans] = useState([]);
   const [pantry, setPantry] = useState([]);
+  const [prices, setPrices] = useState({});
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [tab, setTab] = useState(() => {
     // PWA manifest shortcuts land here, e.g. ./?tab=shopping
@@ -1216,6 +1266,7 @@ export default function TheKitchen() {
       setMyPans(await load(K_MYPANS, []));
       setBakePlans(await load(K_BAKEPLANS, []));
       setPantry(await load(K_PANTRY, []));
+      setPrices(await load(K_PRICES, {}));
       setSettings({ ...DEFAULT_SETTINGS, ...(await load(K_SETTINGS, {})) });
     })();
   }, []);
@@ -1260,6 +1311,14 @@ export default function TheKitchen() {
   const persistMyPans = (next) => { setMyPans(next); save(K_MYPANS, next); };
   const persistBakePlans = (next) => { setBakePlans(next); save(K_BAKEPLANS, next); };
   const persistPantry = (next) => { setPantry(next); save(K_PANTRY, next); };
+  const persistPrices = (next) => { setPrices(next); save(K_PRICES, next); };
+
+  const setPrice = (name, price, unit) => {
+    const key = priceKey(name);
+    if (!key) return;
+    if (!(price > 0)) { const next = { ...prices }; delete next[key]; persistPrices(next); return; }
+    persistPrices({ ...prices, [key]: { price, unit } });
+  };
   const persistSettings = (next) => { setSettings(next); save(K_SETTINGS, next); };
 
   /* undo window: one tap to put things back exactly as they were */
@@ -1425,7 +1484,7 @@ export default function TheKitchen() {
   const pushTimer = useRef(null);
   const pulledRef = useRef(false);
   const collectRef = useRef(() => null);
-  collectRef.current = () => ({ recipes, plan, shop, favs, templates, myTips, myPans, bakePlans, pantry, settings });
+  collectRef.current = () => ({ recipes, plan, shop, favs, templates, myTips, myPans, bakePlans, pantry, prices, settings });
 
   const applyRemoteData = (d) => {
     if (!d || !Array.isArray(d.recipes)) return;
@@ -1438,6 +1497,7 @@ export default function TheKitchen() {
     persistMyPans(Array.isArray(d.myPans) ? d.myPans : []);
     persistBakePlans(Array.isArray(d.bakePlans) ? d.bakePlans : []);
     persistPantry(Array.isArray(d.pantry) ? d.pantry : []);
+    persistPrices(d.prices && typeof d.prices === "object" ? d.prices : {});
     persistSettings({ ...DEFAULT_SETTINGS, ...(d.settings || {}) });
   };
 
@@ -1504,7 +1564,7 @@ export default function TheKitchen() {
 
   const exportData = async () => {
     const payload = JSON.stringify(
-      { app: "becs-kitchen", exported: new Date().toISOString(), recipes, plan, shop, favs, templates, myTips, myPans, bakePlans, pantry, settings },
+      { app: "becs-kitchen", exported: new Date().toISOString(), recipes, plan, shop, favs, templates, myTips, myPans, bakePlans, pantry, prices, settings },
       null, 2
     );
     try {
@@ -1538,6 +1598,7 @@ export default function TheKitchen() {
         persistMyPans(Array.isArray(d.myPans) ? d.myPans : []);
         persistBakePlans(Array.isArray(d.bakePlans) ? d.bakePlans : []);
         persistPantry(Array.isArray(d.pantry) ? d.pantry : []);
+        persistPrices(d.prices && typeof d.prices === "object" ? d.prices : {});
         persistSettings({ ...DEFAULT_SETTINGS, ...(d.settings || {}) });
         setView({ page: "list" });
         setToast(`Imported ${d.recipes.length} recipes from backup`);
@@ -1660,6 +1721,7 @@ export default function TheKitchen() {
           <RecipePage
             recipe={current}
             settings={settings}
+            prices={prices}
             myPans={myPans}
             allRecipes={recipes}
             favIds={favs}
@@ -1736,6 +1798,8 @@ export default function TheKitchen() {
             myPans={myPans}
             onAddPan={(pan) => { persistMyPans([...myPans, { id: uid(), ...pan }]); setToast(`Saved pan: ${pan.name || panLabel(pan)}`); }}
             onRemovePan={(id) => persistMyPans(myPans.filter((p) => p.id !== id))}
+            prices={prices}
+            onSetPrice={setPrice}
             pantry={pantry}
             onAddStaple={(name) => {
               const t = name.trim().toLowerCase();
@@ -1761,6 +1825,7 @@ export default function TheKitchen() {
               persistMyPans([]);
               persistBakePlans([]);
               persistPantry([]);
+              persistPrices({});
               persistSettings(DEFAULT_SETTINGS);
               setToast("Everything reset to a fresh kitchen");
             }}
@@ -1774,6 +1839,8 @@ export default function TheKitchen() {
         {tab === "shopping" && (
           <ShoppingPage
             items={shop}
+            prices={prices}
+            onSetPrice={setPrice}
             toggle={(id) => persistShop(shop.map((s) => (s.id === id ? { ...s, checked: !s.checked } : s)))}
             remove={(id) => persistShop(shop.filter((s) => s.id !== id))}
             addManual={(text) => {
@@ -2092,7 +2159,7 @@ function WhatCanIMake({ recipes, open }) {
 
 /* ---------- recipe view ---------- */
 
-function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [], onOpenRecipe, fav, toggleFav, onBack, onEdit, onDelete, onDuplicate, onToast, onAddToShop, onAddToPlan, onPatch, onCooked }) {
+function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [], favIds = [], onOpenRecipe, fav, toggleFav, onBack, onEdit, onDelete, onDuplicate, onToast, onAddToShop, onAddToPlan, onPatch, onCooked }) {
   const kind = scalingKind(recipe);
   const startServes = settings.defaultServes || recipe.baseServings;
   const [servings, setServings] = useState(startServes);
@@ -2102,26 +2169,37 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
   const [pickDay, setPickDay] = useState(false);
   const [planSlot, setPlanSlot] = useState("dinner");
   const [planWeek, setPlanWeek] = useState(thisMonday);
+  // reverse scaler: an exact factor that overrides the serves/batch/pan controls
+  const [override, setOverride] = useState(null);
   const [cooking, setCooking] = useState(false);
   const [ticked, setTicked] = useState(() => new Set());
 
-  const factor =
+  const controlFactor =
     kind === "serves" ? servings / recipe.baseServings :
     kind === "batch" ? batch :
     (recipe.basePan && pan && panArea(recipe.basePan) > 0 ? panArea(pan) / panArea(recipe.basePan) : 1);
+  const factor = override != null ? override : controlFactor;
   const scaled = Math.abs(factor - 1) > 0.001;
   const cooked = recipe.cooked || [];
 
   const scaleLabel =
-    kind === "serves" ? `serves ${servings}` :
-    kind === "batch" ? `×${fmtFactor(batch)} batch` :
-    panLabel(pan);
+    override != null
+      ? (kind === "serves"
+          ? `serves ${trimNum(Math.round(override * recipe.baseServings * 10) / 10)}`
+          : `×${trimNum(Math.round(override * 100) / 100)}`)
+      : kind === "serves" ? `serves ${servings}` :
+        kind === "batch" ? `×${fmtFactor(batch)} batch` :
+        panLabel(pan);
+
+  /* any touch of the normal controls drops back out of the exact override */
+  const clearOverride = () => setOverride(null);
 
   useEffect(() => {
     setServings(startServes);
     setBatch(1);
     setPan(recipe.basePan || null);
     setCustomPan(false);
+    setOverride(null);
     setPickDay(false); setCooking(false);
   }, [recipe.id]);
 
@@ -2207,13 +2285,33 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.7, fontWeight: 600 }}>Serves</div>
-              <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 40, lineHeight: 1 }}>{servings}</div>
+              <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 40, lineHeight: 1 }}>
+                {override != null ? trimNum(Math.round(override * recipe.baseServings * 10) / 10) : servings}
+              </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-              <Stepper label="−" disabled={servings <= 1} onClick={() => setServings((s) => Math.max(1, s - 1))} />
-              <Stepper label="+" disabled={servings >= 40} onClick={() => setServings((s) => Math.min(40, s + 1))} />
+              {/* From a whole number these step by one. From an exact scale they land
+                  on the neighbouring whole serve — 5.6 gives 5 down and 6 up. */}
+              <Stepper
+                label="−"
+                disabled={servings <= 1 && override == null}
+                onClick={() => {
+                  const cur = override != null ? override * recipe.baseServings : servings;
+                  clearOverride();
+                  setServings(Math.max(1, Math.min(40, Math.ceil(cur) - 1)));
+                }}
+              />
+              <Stepper
+                label="+"
+                disabled={servings >= 40}
+                onClick={() => {
+                  const cur = override != null ? override * recipe.baseServings : servings;
+                  clearOverride();
+                  setServings(Math.max(1, Math.min(40, Math.floor(cur) + 1)));
+                }}
+              />
               <button
-                onClick={() => setServings(recipe.baseServings)}
+                onClick={() => { clearOverride(); setServings(recipe.baseServings); }}
                 aria-hidden={!scaled}
                 tabIndex={scaled ? 0 : -1}
                 style={{ background: "none", border: `1px solid ${C.onPrimaryFaint}`, color: C.onPrimary, borderRadius: 999, padding: "8px 13px", fontSize: 13, visibility: scaled ? "visible" : "hidden" }}
@@ -2246,7 +2344,7 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
             {BATCH_OPTIONS.map((b) => (
               <button
                 key={b}
-                onClick={() => setBatch(b)}
+                onClick={() => { clearOverride(); setBatch(b); }}
                 style={{
                   background: batch === b ? C.onPrimary : "transparent",
                   color: batch === b ? C.greenDeep : C.onPrimary,
@@ -2281,7 +2379,7 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
               return (
                 <button
                   key={i}
-                  onClick={() => { setPan(p); setCustomPan(false); }}
+                  onClick={() => { clearOverride(); setPan(p); setCustomPan(false); }}
                   style={{
                     background: active ? C.onPrimary : "transparent",
                     color: active ? C.greenDeep : C.onPrimary,
@@ -2305,7 +2403,7 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
               Custom…
             </button>
           </div>
-          {customPan && <PanPicker pan={pan} basePan={recipe.basePan} onChange={setPan} />}
+          {customPan && <PanPicker pan={pan} basePan={recipe.basePan} onChange={(p) => { clearOverride(); setPan(p); }} />}
           <div style={{ fontSize: 12.5, opacity: 0.75, marginTop: 10 }}>
             {scaled
               ? `Scaling ×${Math.round(factor * 100) / 100} by pan area — amounts updated below. Bake time will shift a little: same temperature, start checking earlier for thinner bakes and allow longer for deeper ones.`
@@ -2313,6 +2411,25 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
           </div>
         </div>
       )}
+
+      <ReverseScaler
+        recipe={recipe}
+        kind={kind}
+        onApply={(f, exact) => {
+          if (kind === "serves" && !exact) {
+            setOverride(null);
+            setServings(Math.max(1, Math.min(40, Math.round(f * recipe.baseServings))));
+          } else if (kind === "batch" && !exact) {
+            setOverride(null);
+            setBatch(BATCH_OPTIONS.reduce((best, b) => (Math.abs(b - f) < Math.abs(best - f) ? b : best), BATCH_OPTIONS[0]));
+          } else {
+            setOverride(f);
+          }
+        }}
+        onReset={() => { clearOverride(); setServings(startServes); setBatch(1); setPan(recipe.basePan || null); }}
+      />
+
+      <CostPerServe recipe={recipe} factor={factor} kind={kind} servings={servings} override={override} prices={prices} />
 
       <div className="no-print" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22, alignItems: "center" }}>
         <button
@@ -2468,6 +2585,135 @@ function RecipePage({ recipe, settings, myPans = [], allRecipes = [], favIds = [
           onCooked={() => { onCooked(); setCooking(false); }}
         />
       )}
+    </div>
+  );
+}
+
+/* Scale from what you actually have: pick an ingredient, say how much is in
+   the fridge, and the whole recipe follows. Drives the same factor the
+   serves/batch/pan controls do, so everything downstream is unchanged. */
+function ReverseScaler({ recipe, kind, onApply, onReset }) {
+  const candidates = recipe.ingredients
+    .map((it, i) => ({ it, i }))
+    .filter(({ it }) => it.amount != null && it.amount > 0);
+
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState(candidates.length ? candidates[0].i : null);
+  const [amount, setAmount] = useState("");
+  const [exact, setExact] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setOpen(false); setAmount(""); setError(""); setExact(false);
+    setPick(candidates.length ? candidates[0].i : null);
+  }, [recipe.id]);
+
+  if (!candidates.length) return null;
+
+  const chosen = recipe.ingredients[pick];
+  const apply = () => {
+    const yours = parseFloat(String(amount).replace(",", "."));
+    if (!(yours > 0)) { setError("Enter how much you have."); return; }
+    if (!chosen || !(chosen.amount > 0)) { setError("Pick an ingredient with an amount."); return; }
+    const f = yours / chosen.amount;
+    if (!isFinite(f) || f <= 0) { setError("That doesn't scale to anything sensible."); return; }
+    if (f < 0.05 || f > 50) { setError("That's more than 50× off the recipe — check the amount."); return; }
+    setError("");
+    onApply(f, exact || kind === "pan");
+  };
+
+  return (
+    <div className="no-print" style={{ marginBottom: 14 }}>
+      {!open ? (
+        <button
+          onClick={() => setOpen(true)}
+          style={{ background: C.card, border: `1px dashed ${C.line}`, borderRadius: 12, padding: "9px 16px", fontSize: 13.5, color: C.inkSoft, fontWeight: 500 }}
+        >
+          ⚖️ Scale from what I have…
+        </button>
+      ) : (
+        <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 10 }}>
+            <span style={{ ...sectionHead(), margin: 0 }}>Scale from what I have</span>
+            <button onClick={() => { setOpen(false); setError(""); }} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 13 }}>Close</button>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <label style={{ fontSize: 12, color: C.inkSoft, flex: "1 1 200px" }}>
+              I have
+              <select
+                value={pick}
+                onChange={(e) => { setPick(Number(e.target.value)); setError(""); }}
+                style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
+              >
+                {candidates.map(({ it, i }) => (
+                  <option key={i} value={i}>{canonicalItemName(it.name)}</option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 12, color: C.inkSoft, width: 130 }}>
+              Amount{chosen && chosen.unit ? ` (${chosen.unit})` : ""}
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={amount}
+                onChange={(e) => { setAmount(e.target.value); setError(""); }}
+                onKeyDown={(e) => e.key === "Enter" && apply()}
+                placeholder={chosen ? trimNum(chosen.amount) : ""}
+                style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
+              />
+            </label>
+            <button
+              onClick={apply}
+              style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "10px 20px", fontSize: 13.5, fontWeight: 600 }}
+            >
+              Scale
+            </button>
+            <button
+              onClick={() => { setAmount(""); setError(""); onReset(); }}
+              style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "10px 16px", fontSize: 13, color: C.inkSoft, fontWeight: 500 }}
+            >
+              Reset
+            </button>
+          </div>
+
+          {kind !== "pan" && (
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, color: C.inkSoft, marginTop: 10, cursor: "pointer" }}>
+              <input type="checkbox" checked={exact} onChange={(e) => setExact(e.target.checked)} style={{ width: 15, height: 15, accentColor: C.green }} />
+              Exact — don't round to {kind === "serves" ? "whole serves" : "a standard batch"}
+            </label>
+          )}
+
+          {error
+            ? <div style={{ fontSize: 12.5, color: C.danger, marginTop: 8, fontWeight: 500 }}>{error}</div>
+            : (
+              <div style={{ fontSize: 12, color: C.faint, marginTop: 8, lineHeight: 1.5 }}>
+                Everything else rescales to match. Remember spices and salt don't scale in a straight line — season to taste at the end.
+              </div>
+            )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* An estimate, and labelled as one: only shown when enough of the costable
+   ingredients have a price, and always with the count it's based on. */
+function CostPerServe({ recipe, factor, kind, servings, override, prices }) {
+  const cost = recipeCost(recipe, factor, prices);
+  if (!cost || cost.coverage < COST_MIN_COVERAGE) return null;
+
+  const serves = override != null ? override * recipe.baseServings : servings;
+  const perServe = kind === "serves" && serves > 0 ? cost.total / serves : null;
+
+  return (
+    <div style={{ background: C.mustardSoft, borderRadius: 12, padding: "10px 16px", marginBottom: 14, display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+      <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 20, color: C.accentText }}>
+        {perServe != null ? `${money(perServe)} a serve` : `${money(cost.total)} total`}
+      </span>
+      <span style={{ fontSize: 12.5, color: C.noteText, lineHeight: 1.5 }}>
+        estimate{perServe != null ? ` · ${money(cost.total)} total` : ""} · based on {cost.priced} of {cost.costable} costable ingredient{cost.costable > 1 ? "s" : ""}
+      </span>
     </div>
   );
 }
@@ -3163,7 +3409,7 @@ function MiniStep({ label, onClick, disabled }) {
 
 /* ---------- shopping list ---------- */
 
-function ShoppingPage({ items, toggle, remove, addManual, clearChecked, clearAll, onToast }) {
+function ShoppingPage({ items, prices = {}, onSetPrice, toggle, remove, addManual, clearChecked, clearAll, onToast }) {
   const [text, setText] = useState("");
   const open = items.filter((i) => !i.checked);
   const done = items.filter((i) => i.checked);
@@ -3239,42 +3485,90 @@ function ShoppingPage({ items, toggle, remove, addManual, clearChecked, clearAll
       {grouped.map(([label, g]) => (
         <div key={label} style={{ marginBottom: 16 }}>
           <div style={{ ...sectionHead(), marginBottom: 6 }}>{label}</div>
-          {g.map((i) => <ShopRow key={i.id} item={i} toggle={toggle} remove={remove} />)}
+          {g.map((i) => <ShopRow key={i.id} item={i} prices={prices} onSetPrice={onSetPrice} toggle={toggle} remove={remove} />)}
         </div>
       ))}
 
       {done.length > 0 && (
         <>
           <div style={{ ...sectionHead(), marginTop: 24, marginBottom: 6 }}>In the trolley</div>
-          {done.map((i) => <ShopRow key={i.id} item={i} toggle={toggle} remove={remove} />)}
+          {done.map((i) => <ShopRow key={i.id} item={i} prices={prices} onSetPrice={onSetPrice} toggle={toggle} remove={remove} />)}
         </>
       )}
     </div>
   );
 }
 
-function ShopRow({ item, toggle, remove }) {
+function ShopRow({ item, prices = {}, onSetPrice, toggle, remove }) {
+  const known = prices[priceKey(item.name)];
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [unit, setUnit] = useState(known ? known.unit : "kg");
+
+  const open = () => { setDraft(known ? String(known.price) : ""); setUnit(known ? known.unit : "kg"); setEditing(true); };
+  const commit = () => {
+    const p = parseFloat(String(draft).replace(",", "."));
+    if (p > 0) onSetPrice(item.name, p, unit);
+    setEditing(false);
+  };
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 8, opacity: item.checked ? 0.55 : 1 }}>
-      <button
-        onClick={() => toggle(item.id)}
-        aria-label={item.checked ? "Untick item" : "Tick item"}
-        style={{
-          width: 24, height: 24, borderRadius: 7, flexShrink: 0,
-          border: `2px solid ${item.checked ? C.green : C.line}`,
-          background: item.checked ? C.green : "transparent",
-          color: C.onPrimary, fontSize: 14, lineHeight: 1, display: "grid", placeItems: "center",
-        }}
-      >
-        {item.checked ? "✓" : ""}
-      </button>
-      <span style={{ flex: 1, fontSize: 15, textDecoration: item.checked ? "line-through" : "none" }}>
-        {item.amount != null && (
-          <strong style={{ fontWeight: 600 }}>{formatAmount(item.amount, item.unit)}{item.unit ? ` ${item.unit}` : ""} </strong>
-        )}
-        {item.name}
-      </span>
-      <button onClick={() => remove(item.id)} aria-label="Remove item" style={{ background: "none", border: "none", color: C.faint, fontSize: 17, padding: 4 }}>×</button>
+    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 8, opacity: item.checked ? 0.55 : 1 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          onClick={() => toggle(item.id)}
+          aria-label={item.checked ? "Untick item" : "Tick item"}
+          style={{
+            width: 24, height: 24, borderRadius: 7, flexShrink: 0,
+            border: `2px solid ${item.checked ? C.green : C.line}`,
+            background: item.checked ? C.green : "transparent",
+            color: C.onPrimary, fontSize: 14, lineHeight: 1, display: "grid", placeItems: "center",
+          }}
+        >
+          {item.checked ? "✓" : ""}
+        </button>
+        <span style={{ flex: 1, fontSize: 15, textDecoration: item.checked ? "line-through" : "none" }}>
+          {item.amount != null && (
+            <strong style={{ fontWeight: 600 }}>{formatAmount(item.amount, item.unit)}{item.unit ? ` ${item.unit}` : ""} </strong>
+          )}
+          {item.name}
+        </span>
+        {/* setting prices while you shop is how the price book fills itself */}
+        <button
+          onClick={() => (editing ? setEditing(false) : open())}
+          aria-label={known ? `Edit price for ${item.name}` : `Add a price for ${item.name}`}
+          style={{
+            background: "none", border: "none", fontSize: 12.5, fontWeight: 600, padding: "4px 6px",
+            color: known ? C.accentText : C.faint,
+          }}
+        >
+          {known ? money(known.price) : "$"}
+        </button>
+        <button onClick={() => remove(item.id)} aria-label="Remove item" style={{ background: "none", border: "none", color: C.faint, fontSize: 17, padding: 4 }}>×</button>
+      </div>
+
+      {editing && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+          <input
+            autoFocus
+            type="number" min="0" step="0.01"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }}
+            placeholder="12.00"
+            style={{ width: 100, padding: "8px 12px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, fontSize: 14 }}
+          />
+          <select
+            value={unit}
+            onChange={(e) => setUnit(e.target.value)}
+            style={{ padding: "8px 12px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, fontSize: 14 }}
+          >
+            {PRICE_UNITS.map(([u, label]) => <option key={u} value={u}>{label}</option>)}
+          </select>
+          <button onClick={commit} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "8px 16px", fontSize: 13, fontWeight: 600 }}>Save</button>
+          <button onClick={() => setEditing(false)} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 13 }}>Cancel</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -3303,6 +3597,19 @@ function EditPage({ recipe, settings, knownCategories = CATEGORIES, onCancel, on
   const [convMeasure, setConvMeasure] = useState(250);
 
   const runImport = () => {
+    // structured data first — it needs far less tidying than parsed prose
+    const jl = parseJsonLdRecipe(pasteText);
+    if (jl) {
+      if (jl.title && !title) setTitle(jl.title);
+      if (jl.serves) setServingsField(jl.serves);
+      if (jl.time && !time) setTime(jl.time);
+      if (jl.category && !recipe) setCategory(jl.category);
+      if (jl.ingLines.length) setIngText(jl.ingLines.join("\n"));
+      if (jl.stepLines.length) setStepText(jl.stepLines.join("\n"));
+      setPasteMsg(`Found structured recipe data — filled in ${jl.ingLines.length} ingredients and ${jl.stepLines.length} steps. Worth a quick check, but this should be accurate.`);
+      return;
+    }
+
     const p = parsePastedRecipe(pasteText);
     if (!p.ingLines.length && !p.stepLines.length) {
       setPasteMsg("Couldn't find ingredients or steps in that text — check it has one item per line.");
@@ -3368,6 +3675,8 @@ function EditPage({ recipe, settings, knownCategories = CATEGORIES, onCancel, on
           <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px" }}>
             <div style={{ fontSize: 13, color: C.inkSoft, marginBottom: 8, lineHeight: 1.5 }}>
               Copy a recipe from a website or note and paste it here — I'll pull out the title, serves, ingredients and steps for you to tidy up.
+              For a much cleaner import, paste the page's <em>source</em> instead (right-click → View page source, select all, copy): most recipe sites
+              hide a precise machine-readable copy in there, and I'll use that when it's present.
             </div>
             <textarea
               value={pasteText}
@@ -3811,13 +4120,21 @@ function TipsPage({ kitchenTimers, setKitchenTimers, myTips, onAddTip, onRemoveT
 
 /* ---------- settings ---------- */
 
-function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry = [], onAddStaple, onRemoveStaple, onExport, onImport, restoreStarters, resetAll }) {
+function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry = [], onAddStaple, onRemoveStaple, prices = {}, onSetPrice, onExport, onImport, restoreStarters, resetAll }) {
   const [panForm, setPanForm] = useState(null); // null | {name, shape, dims…}
   const [confirmPanDel, setConfirmPanDel] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const [stapleText, setStapleText] = useState("");
+  const [priceForm, setPriceForm] = useState({ name: "", price: "", unit: "kg" });
   const serveOptions = [null, 1, 2, 3, 4, 5, 6, 8, 10];
   const addStaple = () => { onAddStaple(stapleText); setStapleText(""); };
+  const priceRows = Object.entries(prices).sort(([a], [b]) => a.localeCompare(b));
+  const addPrice = () => {
+    const p = parseFloat(String(priceForm.price).replace(",", "."));
+    if (!priceForm.name.trim() || !(p > 0)) return;
+    onSetPrice(priceForm.name, p, priceForm.unit);
+    setPriceForm({ name: "", price: "", unit: priceForm.unit });
+  };
 
   return (
     <div style={{ maxWidth: 620 }}>
@@ -4113,6 +4430,78 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
       </section>
 
       <section style={settingsCard()}>
+        <h2 style={sectionHead()}>Price book</h2>
+        <p style={settingsHint()}>
+          Rough prices for the things you buy often. Recipes then show an estimated cost per serve — only once enough of the ingredients have a price,
+          and always labelled with how many it's based on. Names match the same way the shopping list merges them, so “beef mince” covers every recipe that uses it.
+          You can also set a price straight from the shopping list as you shop.
+        </p>
+
+        {priceRows.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            {priceRows.map(([key, v]) => (
+              <div key={key} className="print-rule" style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.line}` }}>
+                <span style={{ flex: 1, fontSize: 14, color: C.ink }}>{key}</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>
+                  {money(v.price)} <span style={{ color: C.faint, fontWeight: 400, fontSize: 12.5 }}>{(PRICE_UNITS.find(([u]) => u === v.unit) || [, v.unit])[1]}</span>
+                </span>
+                <button
+                  onClick={() => onSetPrice(key, 0, v.unit)}
+                  aria-label={`Remove price for ${key}`}
+                  style={{ background: "none", border: "none", color: C.danger, fontSize: 16, padding: "2px 6px" }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <label style={{ fontSize: 12, color: C.inkSoft, flex: "1 1 160px" }}>
+            Ingredient
+            <input
+              value={priceForm.name}
+              onChange={(e) => setPriceForm({ ...priceForm, name: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && addPrice()}
+              placeholder="e.g. beef mince"
+              style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
+            />
+          </label>
+          <label style={{ fontSize: 12, color: C.inkSoft, width: 100 }}>
+            Price
+            <input
+              type="number" min="0" step="0.01"
+              value={priceForm.price}
+              onChange={(e) => setPriceForm({ ...priceForm, price: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && addPrice()}
+              placeholder="12.00"
+              style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
+            />
+          </label>
+          <label style={{ fontSize: 12, color: C.inkSoft, width: 120 }}>
+            Unit
+            <select
+              value={priceForm.unit}
+              onChange={(e) => setPriceForm({ ...priceForm, unit: e.target.value })}
+              style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
+            >
+              {PRICE_UNITS.map(([u, label]) => <option key={u} value={u}>{label}</option>)}
+            </select>
+          </label>
+          <button
+            onClick={addPrice}
+            style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "10px 20px", fontSize: 13.5, fontWeight: 600 }}
+          >
+            Save price
+          </button>
+        </div>
+        <p style={{ ...settingsHint(), margin: "10px 0 0", fontSize: 12 }}>
+          Ingredients measured in something that can't be converted — “2 rashers”, “1 bunch” — are left out of the estimate entirely rather than guessed at.
+        </p>
+      </section>
+
+      <section style={settingsCard()}>
         <h2 style={sectionHead()}>Backup & transfer</h2>
         <p style={settingsHint()}>
           Data lives on this device only. Export a backup file here, then import it on another device (or after reinstalling) to move your whole kitchen across — recipes, photos, planner, templates, shopping list and settings.
@@ -4265,6 +4654,117 @@ function resizeImage(file, max) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+/* ---------- schema.org/Recipe JSON-LD ----------
+
+   Most recipe sites embed a machine-readable copy of the recipe in a
+   <script type="application/ld+json"> block. Pasting page source (or the
+   JSON itself) gets a far cleaner import than guessing at prose, with no
+   backend or CORS proxy needed. Falls back to parsePastedRecipe. */
+
+/* Let the browser decode entities — a hand-rolled table never covers the long
+   tail (&ugrave;, &frac12;, &mdash;) that real recipe sites use. DOMParser on
+   text/html neither executes scripts nor fetches anything, and the markup is
+   only ever read back as textContent. */
+const decodeEntities = (s) => {
+  const withBreaks = String(s)
+    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|li|div|h\d)>/gi, "\n");
+  let out;
+  try {
+    out = new DOMParser().parseFromString(withBreaks, "text/html").documentElement.textContent || "";
+  } catch {
+    out = withBreaks.replace(/<[^>]*>/g, " ");
+  }
+  return out
+    .replace(/ /g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+};
+
+const isoDurationToText = (d) => {
+  const m = /^P(?:([\d.]+)D)?(?:T(?:([\d.]+)H)?(?:([\d.]+)M)?)?$/.exec(String(d || "").trim());
+  if (!m) return "";
+  const mins = (Number(m[1]) || 0) * 1440 + (Number(m[2]) || 0) * 60 + (Number(m[3]) || 0);
+  return mins > 0 ? fmtDur(mins) : "";
+};
+
+const asArray = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+const hasType = (node, type) =>
+  asArray(node && node["@type"]).some((t) => String(t).toLowerCase() === type.toLowerCase());
+
+function findRecipeNode(data) {
+  const seen = new Set();
+  const queue = [data];
+  while (queue.length) {
+    const node = queue.shift();
+    if (!node || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
+    if (!Array.isArray(node) && hasType(node, "Recipe")) return node;
+    for (const v of Array.isArray(node) ? node : Object.values(node)) {
+      if (v && typeof v === "object") queue.push(v);
+    }
+  }
+  return null;
+}
+
+/* instructions come as plain strings, HowToStep objects, or HowToSections
+   holding nested steps — all three turn up in the wild */
+function flattenInstructions(value, out = []) {
+  for (const item of asArray(value)) {
+    if (typeof item === "string") {
+      decodeEntities(item).split("\n").map((s) => s.trim()).filter(Boolean).forEach((s) => out.push(s));
+    } else if (item && typeof item === "object") {
+      if (item.itemListElement) flattenInstructions(item.itemListElement, out);
+      else if (item.text) {
+        decodeEntities(item.text).split("\n").map((s) => s.trim()).filter(Boolean).forEach((s) => out.push(s));
+      } else if (item.name) {
+        const n = decodeEntities(item.name);
+        if (n) out.push(n);
+      }
+    }
+  }
+  return out;
+}
+
+const firstInt = (v) => {
+  for (const item of asArray(v)) {
+    const m = /\d+/.exec(String(item));
+    if (m) return parseInt(m[0], 10);
+  }
+  return null;
+};
+
+function parseJsonLdRecipe(text) {
+  const blocks = [...String(text).matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
+  if (!blocks.length && /^\s*[[{]/.test(text)) blocks.push(text); // raw JSON pasted directly
+
+  for (const raw of blocks) {
+    let data;
+    try { data = JSON.parse(raw.trim()); } catch { continue; }
+    const node = findRecipeNode(data);
+    if (!node) continue;
+
+    const ingLines = asArray(node.recipeIngredient || node.ingredients)
+      .map((i) => decodeEntities(i))
+      .filter(Boolean);
+    const stepLines = flattenInstructions(node.recipeInstructions).filter((s) => s.length > 1);
+    if (!ingLines.length && !stepLines.length) continue;
+
+    return {
+      title: decodeEntities(asArray(node.name)[0] || ""),
+      serves: firstInt(node.recipeYield),
+      time: isoDurationToText(node.totalTime) || isoDurationToText(node.cookTime),
+      category: decodeEntities(asArray(node.recipeCategory)[0] || ""),
+      ingLines,
+      stepLines,
+    };
+  }
+  return null;
 }
 
 function parsePastedRecipe(text) {
