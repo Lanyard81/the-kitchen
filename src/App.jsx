@@ -1116,11 +1116,69 @@ const PALETTES = {
 
 const THEME_LIST = Object.entries(PALETTES).map(([id, p]) => [id, p.label, p.light.green, p.light.mustard]);
 
+/* ---------- soft depth ----------
+
+   Every surface in this app is already a little lighter than the page behind
+   it, in all seven themes and both modes. That rules out true neumorphism,
+   which needs the surface and its background to be the same material — so
+   depth here is a tinted dual drop-shadow plus a light top rim instead.
+
+   Shadows are tinted with the theme's own ink rather than neutral grey, so
+   Terracotta reads warm and Blue Gum reads cool.
+
+   Dark mode deliberately does NOT get the dual-light emboss: a bright top
+   rim on a near-black surface blooms into a halo and eats contrast. There
+   the rim drops to a hairline and depth comes from deeper shadow. */
+
+const RADIUS = { xs: 8, sm: 12, md: 14, lg: 18, pill: 999 };
+
+const depthTokens = (t, mode) =>
+  mode === "dark"
+    ? {
+        elev1: "0 1px 2px rgba(0,0,0,0.40), 0 2px 8px rgba(0,0,0,0.28)",
+        elev2: "0 2px 6px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.35)",
+        elev3: "0 12px 34px rgba(0,0,0,0.60)",
+        rim: "inset 0 1px 0 rgba(255,255,255,0.055)",
+        pressed: "inset 0 2px 6px rgba(0,0,0,0.55)",
+        fieldInset: "inset 0 1px 3px rgba(0,0,0,0.30)",
+        glass: hexA(t.card, 0.72),
+        glassEdge: "rgba(255,255,255,0.08)",
+      }
+    : {
+        elev1: `0 1px 2px ${hexA(t.ink, 0.05)}, 0 2px 8px ${hexA(t.ink, 0.05)}`,
+        elev2: `0 2px 6px ${hexA(t.ink, 0.06)}, 0 8px 20px ${hexA(t.ink, 0.08)}`,
+        elev3: `0 12px 34px ${hexA(t.ink, 0.16)}`,
+        rim: "inset 0 1px 0 rgba(255,255,255,0.75)",
+        pressed: `inset 0 2px 6px ${hexA(t.ink, 0.14)}`,
+        fieldInset: `inset 0 1px 3px ${hexA(t.ink, 0.07)}`,
+        glass: hexA(t.card, 0.78),
+        glassEdge: "rgba(255,255,255,0.55)",
+      };
+
 const getTheme = (name, mode) => {
   const p = PALETTES[name] || PALETTES.olive;
   const t = p[mode] || p.light;
-  return { ...t, onPrimarySoft: hexA(t.onPrimary, 0.8), onPrimaryFaint: hexA(t.onPrimary, 0.45), onPrimaryFaint2: hexA(t.onPrimary, 0.15) };
+  return {
+    ...t,
+    onPrimarySoft: hexA(t.onPrimary, 0.8),
+    onPrimaryFaint: hexA(t.onPrimary, 0.45),
+    onPrimaryFaint2: hexA(t.onPrimary, 0.15),
+    ...depthTokens(t, mode === "dark" ? "dark" : "light"),
+  };
 };
+
+/* bridge the token object into CSS so real :hover/:active rules can use it —
+   one source of truth, just exposed to the stylesheet */
+const themeVars = (c) => ({
+  "--k-elev1": c.elev1,
+  "--k-elev2": c.elev2,
+  "--k-elev3": c.elev3,
+  "--k-rim": c.rim,
+  "--k-pressed": c.pressed,
+  "--k-field": c.fieldInset,
+  "--k-glass": c.glass,
+  "--k-glass-edge": c.glassEdge,
+});
 
 let C = getTheme("olive", "light");
 
@@ -1624,7 +1682,7 @@ export default function TheKitchen() {
   const unchecked = shop.filter((s) => !s.checked).length;
 
   return (
-    <div className="app-root" style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Instrument Sans', system-ui, sans-serif" }}>
+    <div className="app-root" style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Instrument Sans', system-ui, sans-serif", ...themeVars(C) }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Instrument+Sans:wght@400;500;600&display=swap');
         * { box-sizing: border-box; }
@@ -1637,6 +1695,66 @@ export default function TheKitchen() {
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
         @keyframes timerDone { 0%, 100% { background: ${C.mustard}; } 50% { background: ${C.danger}; } }
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+        /* ---- soft depth ----
+           Inline styles keep the colours; these classes add only elevation and
+           the pressed/hover states inline styles can't express. Fills stay
+           fully opaque, so text contrast is untouched. */
+
+        .k-raise, .k-press, .k-tab, .k-step {
+          transition: box-shadow 0.18s ease, transform 0.18s ease;
+        }
+        /* containers: depth, no interaction */
+        .k-flat  { box-shadow: var(--k-elev1); }
+        .k-panel { box-shadow: var(--k-elev2), var(--k-rim); }
+
+        /* cards you can click */
+        .k-raise { box-shadow: var(--k-elev1), var(--k-rim); }
+        .k-raise:active { box-shadow: var(--k-pressed); transform: translateY(0); }
+
+        /* buttons, chips, toggles */
+        .k-press { box-shadow: var(--k-elev1), var(--k-rim); }
+        .k-press:active { box-shadow: var(--k-pressed); transform: translateY(1px); }
+
+        /* nav tabs — raised when active, recessed when not, no vertical shift */
+        .k-tab.is-on  { box-shadow: var(--k-elev2), var(--k-rim); }
+        .k-tab.is-off:active { box-shadow: var(--k-pressed); }
+
+        /* round steppers get a deeper press so they read as physical keys */
+        .k-step { box-shadow: var(--k-elev2), var(--k-rim); }
+        .k-step:active:not(:disabled) { box-shadow: var(--k-pressed); transform: translateY(1px) scale(0.97); }
+        .k-step:disabled { box-shadow: none; }
+
+        /* inputs sit slightly carved-in; the fill stays opaque behind the text */
+        .k-field { box-shadow: var(--k-field); }
+
+        /* the only two translucent surfaces: things with content genuinely behind them */
+        .k-glass {
+          background: var(--k-glass) !important;
+          backdrop-filter: blur(14px) saturate(1.4);
+          -webkit-backdrop-filter: blur(14px) saturate(1.4);
+        }
+        @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+          /* no blur support: fall back to the opaque card colour rather than a wash */
+          .k-glass { background: ${C.card} !important; }
+        }
+
+        @media (hover: hover) {
+          .k-raise:hover { box-shadow: var(--k-elev2), var(--k-rim); transform: translateY(-1px); }
+          .k-press:hover { box-shadow: var(--k-elev2), var(--k-rim); }
+          .k-tab.is-off:hover { box-shadow: var(--k-elev1); }
+          .k-step:hover:not(:disabled) { box-shadow: var(--k-elev3), var(--k-rim); }
+        }
+
+        /* keep the focus ring readable on top of the new elevation */
+        .k-raise:focus-visible, .k-press:focus-visible, .k-tab:focus-visible, .k-step:focus-visible {
+          outline: 2px solid ${C.mustard};
+          outline-offset: 2px;
+        }
+
+        @media (prefers-contrast: more) {
+          .k-raise, .k-press, .k-flat, .k-panel, .k-tab, .k-step { box-shadow: none; }
+        }
 
         .print-only { display: none; }
         @media print {
@@ -1655,12 +1773,16 @@ export default function TheKitchen() {
           .print-rule { border-bottom: 1px solid #ccc !important; }
           h1, h2 { color: #000 !important; }
           li, section, img { break-inside: avoid; page-break-inside: avoid; }
+          /* depth is screen-only — it just muddies toner */
+          * { box-shadow: none !important; backdrop-filter: none !important; }
           img { max-height: 220px !important; }
           a[href]:after { content: ""; }
         }
       `}</style>
 
-      <header className="no-print" style={{ background: C.green, color: C.onPrimary, padding: "calc(18px + env(safe-area-inset-top)) 20px 0" }}>
+      {/* safe-area padding preserved exactly — the shadow casts downward onto
+          the content below and adds no chrome above the Dynamic Island */}
+      <header className="no-print" style={{ background: C.green, color: C.onPrimary, padding: "calc(18px + env(safe-area-inset-top)) 20px 0", boxShadow: C.elev2, position: "relative", zIndex: 2 }}>
         <div style={{ maxWidth: 860, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <button
@@ -1671,8 +1793,9 @@ export default function TheKitchen() {
               <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Everyday cooking, scaled to whoever turns up</div>
             </button>
             <button
+              className="k-press"
               onClick={() => { setTab("recipes"); setView({ page: "edit" }); }}
-              style={{ background: C.mustard, color: C.onAccent, border: "none", borderRadius: 999, padding: "10px 18px", fontWeight: 600, fontSize: 14 }}
+              style={{ background: C.mustard, color: C.onAccent, border: "none", borderRadius: RADIUS.pill, padding: "10px 18px", fontWeight: 600, fontSize: 14 }}
             >
               + New recipe
             </button>
@@ -1687,12 +1810,14 @@ export default function TheKitchen() {
             ].map(([id, label, badge]) => (
               <button
                 key={id}
+                className={`k-tab ${tab === id ? "is-on" : "is-off"}`}
+                aria-current={tab === id ? "page" : undefined}
                 onClick={() => { setTab(id); if (id === "recipes") setView({ page: "list" }); }}
                 style={{
                   flex: 1, minWidth: 0,
                   background: tab === id ? C.bg : "transparent",
                   color: tab === id ? C.ink : C.onPrimarySoft,
-                  border: "none", borderRadius: "10px 10px 0 0", padding: "11px 2px",
+                  border: "none", borderRadius: "12px 12px 0 0", padding: "11px 2px",
                   fontSize: 12.5, fontWeight: 600,
                   display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
                 }}
@@ -1870,8 +1995,8 @@ export default function TheKitchen() {
           aria-live="polite"
           style={{
             position: "fixed", bottom: "calc(24px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)",
-            background: C.greenDeep, color: C.onPrimary, padding: toast.undo ? "10px 12px 10px 22px" : "12px 22px", borderRadius: 999,
-            fontSize: 14, fontWeight: 500, boxShadow: "0 6px 20px rgba(0,0,0,0.25)",
+            background: C.greenDeep, color: C.onPrimary, padding: toast.undo ? "10px 12px 10px 22px" : "12px 22px", borderRadius: RADIUS.pill,
+            fontSize: 14, fontWeight: 500, boxShadow: `${C.elev3}, ${C.rim}`,
             animation: "toastIn 0.2s ease", zIndex: 90, maxWidth: "90vw", textAlign: "center",
             display: "flex", alignItems: "center", gap: 12, justifyContent: "center",
           }}
@@ -1879,9 +2004,10 @@ export default function TheKitchen() {
           <span style={{ color: C.onPrimary }}>{toast.undo ? toast.text : toast}</span>
           {toast.undo && (
             <button
+              className="k-press"
               onClick={() => { const fn = toast.undo; setToast(""); fn(); }}
               style={{
-                background: C.mustard, color: C.onAccent, border: "none", borderRadius: 999,
+                background: C.mustard, color: C.onAccent, border: "none", borderRadius: RADIUS.pill,
                 padding: "7px 16px", fontSize: 13, fontWeight: 700, flexShrink: 0,
               }}
             >
@@ -1917,18 +2043,20 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         <input
+          className="k-field"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search recipes"
-          style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `1px solid ${C.line}`, background: C.card }}
+          style={{ flex: 1, padding: "12px 16px", borderRadius: RADIUS.sm, border: `1px solid ${C.line}`, background: C.card }}
         />
         <button
+          className="k-press"
           onClick={() => setFridgeOpen(!fridgeOpen)}
           style={{
             border: `1px solid ${fridgeOpen ? C.green : C.line}`,
             background: fridgeOpen ? C.green : C.card,
             color: fridgeOpen ? C.onPrimary : C.inkSoft,
-            borderRadius: 12, padding: "0 16px", fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap",
+            borderRadius: RADIUS.sm, padding: "0 16px", fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap",
           }}
         >
           What can I make?
@@ -1941,12 +2069,14 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
         {["All", "★ Favourites"].map((c) => (
           <button
             key={c}
+            className="k-press"
+            aria-pressed={c === cat}
             onClick={() => setCat(c)}
             style={{
               border: `1px solid ${c === cat ? C.green : C.line}`,
               background: c === cat ? C.green : C.card,
               color: c === cat ? C.onPrimary : C.inkSoft,
-              borderRadius: 999, padding: "6px 14px", fontSize: 13, fontWeight: 500,
+              borderRadius: RADIUS.pill, padding: "6px 14px", fontSize: 13, fontWeight: 500,
             }}
           >
             {c}
@@ -1983,7 +2113,7 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
         </button>
 
         {filtersOpen && (
-          <div style={{ marginTop: 12, background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 16px" }}>
+          <div className="k-flat" style={{ marginTop: 12, background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.md, padding: "14px 16px" }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
               <span style={{ fontSize: 11.5, color: C.faint, fontWeight: 600, letterSpacing: 0.8, textTransform: "uppercase" }}>Category</span>
               {realCats.map((c) => {
@@ -1991,12 +2121,14 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
                 return (
                   <button
                     key={c}
+                    className="k-press"
+                    aria-pressed={active}
                     onClick={() => setCat(active ? "All" : c)}
                     style={{
                       border: `1px solid ${active ? C.green : C.line}`,
-                      background: active ? C.green : C.bg,
+                      background: active ? C.green : C.card,
                       color: active ? C.onPrimary : C.inkSoft,
-                      borderRadius: 999, padding: "5px 13px", fontSize: 12.5, fontWeight: 500,
+                      borderRadius: RADIUS.pill, padding: "5px 13px", fontSize: 12.5, fontWeight: 500,
                     }}
                   >
                     {c}
@@ -2013,12 +2145,14 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
                 return (
                   <button
                     key={s}
+                    className="k-press"
+                    aria-pressed={active}
                     onClick={() => setSkillFilter(s)}
                     style={{
                       border: `1px solid ${active ? col : C.line}`,
-                      background: active ? (s === "All" ? C.green : col) : C.bg,
+                      background: active ? (s === "All" ? C.green : col) : C.card,
                       color: active ? C.onPrimary : col,
-                      borderRadius: 999, padding: "4px 12px", fontSize: 12, fontWeight: 600,
+                      borderRadius: RADIUS.pill, padding: "4px 12px", fontSize: 12, fontWeight: 600,
                     }}
                   >
                     {s === "All" ? "All levels" : s}
@@ -2035,12 +2169,14 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
                 return (
                   <button
                     key={d}
+                    className="k-press"
+                    aria-pressed={active}
                     onClick={() => setDietFilters(active ? dietFilters.filter((x) => x !== d) : [...dietFilters, d])}
                     style={{
                       border: `1px solid ${active ? col : C.line}`,
-                      background: active ? col : C.bg,
+                      background: active ? col : C.card,
                       color: active ? C.onPrimary : col,
-                      borderRadius: 999, padding: "4px 12px", fontSize: 12, fontWeight: 600,
+                      borderRadius: RADIUS.pill, padding: "4px 12px", fontSize: 12, fontWeight: 600,
                     }}
                   >
                     {d}
@@ -2067,10 +2203,11 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
         {filtered.map((r) => (
           <div key={r.id} style={{ position: "relative" }}>
             <button
+              className="k-raise"
               onClick={() => open(r.id)}
               style={{
                 width: "100%", textAlign: "left", background: C.card, border: `1px solid ${C.line}`,
-                borderRadius: 14, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column",
+                borderRadius: RADIUS.lg, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column",
               }}
             >
               {r.photo && (
@@ -2095,13 +2232,16 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
                 )}
               </div>
             </button>
-            <button
+            <button className="k-press"
               onClick={() => toggleFav(r.id)}
               aria-label={favs.includes(r.id) ? "Remove from favourites" : "Add to favourites"}
               style={{
                 position: "absolute", top: 8, right: 8, border: "none",
-                background: r.photo ? "rgba(0,0,0,0.35)" : "none", borderRadius: 999,
-                fontSize: 20, lineHeight: 1, color: favs.includes(r.id) ? C.mustard : (r.photo ? "#FFFFFF" : C.faint), padding: 6,
+                background: r.photo ? "rgba(0,0,0,0.35)" : "none", borderRadius: RADIUS.pill,
+                /* inkSoft, not faint: the empty star is an interactive control and
+                   needs 3:1 — faint measured 2.98 against the card. Matches the
+                   recipe page's own favourite toggle. */
+                fontSize: 20, lineHeight: 1, color: favs.includes(r.id) ? C.mustard : (r.photo ? "#FFFFFF" : C.inkSoft), padding: 6,
               }}
             >
               {favs.includes(r.id) ? "★" : "☆"}
@@ -2128,16 +2268,17 @@ function WhatCanIMake({ recipes, open }) {
     : [];
 
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 16px", marginBottom: 14 }}>
+    <div className="k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.md, padding: "14px 16px", marginBottom: 14 }}>
       <div style={{ fontSize: 13.5, color: C.inkSoft, marginBottom: 8, lineHeight: 1.5 }}>
         List what's in the fridge and pantry (separated by commas) and I'll rank your recipes by fewest missing ingredients.
       </div>
       <textarea
+        className="k-field"
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={2}
         placeholder="chicken thighs, rice, eggs, soy sauce, spring onions"
-        style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, resize: "vertical", lineHeight: 1.5 }}
+        style={{ width: "100%", padding: "10px 14px", borderRadius: RADIUS.sm, border: `1px solid ${C.line}`, background: C.bg, resize: "vertical", lineHeight: 1.5 }}
       />
       {ranked.map(({ r, missing }) => (
         <button
@@ -2236,18 +2377,18 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
           ← All recipes
         </button>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={toggleFav} aria-label="Toggle favourite" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 14px", fontSize: 15, color: fav ? C.mustard : C.inkSoft }}>
+          <button className="k-press" onClick={toggleFav} aria-label="Toggle favourite" aria-pressed={fav} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 14px", fontSize: 15, color: fav ? C.mustard : C.inkSoft }}>
             {fav ? "★" : "☆"}
           </button>
-          <button onClick={onEdit} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}>Edit</button>
-          <button onClick={onDuplicate} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}>Duplicate</button>
+          <button className="k-press" onClick={onEdit} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}>Edit</button>
+          <button className="k-press" onClick={onDuplicate} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}>Duplicate</button>
           {/* single tap — the undo toast is the safety net */}
-          <button onClick={onDelete} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Delete</button>
+          <button className="k-press" onClick={onDelete} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Delete</button>
         </div>
       </div>
 
       {recipe.photo && (
-        <img src={recipe.photo} alt={recipe.title} style={{ width: "100%", maxHeight: 260, objectFit: "cover", borderRadius: 16, marginBottom: 16, display: "block" }} />
+        <img className="k-flat" src={recipe.photo} alt={recipe.title} style={{ width: "100%", maxHeight: 260, objectFit: "cover", borderRadius: RADIUS.lg, marginBottom: 16, display: "block" }} />
       )}
 
       <h1 style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 34, margin: "0 0 6px", lineHeight: 1.1 }}>{recipe.title}</h1>
@@ -2272,7 +2413,7 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
         <span style={{ fontSize: 13, color: C.inkSoft }}>
           {cooked.length ? `Cooked ${cooked.length}× · last made ${timeAgo(cooked[cooked.length - 1])}` : "Not cooked yet"}
         </span>
-        <button
+        <button className="k-press"
           onClick={onCooked}
           style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "5px 13px", fontSize: 12.5, color: C.inkSoft, fontWeight: 500 }}
         >
@@ -2281,7 +2422,7 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
       </div>
 
       {kind === "serves" && (
-        <div className="no-print" style={{ background: C.green, color: C.onPrimary, borderRadius: 16, padding: "16px 20px", marginBottom: 14 }}>
+        <div className="no-print k-panel" style={{ background: C.green, color: C.onPrimary, borderRadius: RADIUS.lg, padding: "16px 20px", marginBottom: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.7, fontWeight: 600 }}>Serves</div>
@@ -2311,10 +2452,11 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
                 }}
               />
               <button
+                className="k-press"
                 onClick={() => { clearOverride(); setServings(recipe.baseServings); }}
                 aria-hidden={!scaled}
                 tabIndex={scaled ? 0 : -1}
-                style={{ background: "none", border: `1px solid ${C.onPrimaryFaint}`, color: C.onPrimary, borderRadius: 999, padding: "8px 13px", fontSize: 13, visibility: scaled ? "visible" : "hidden" }}
+                style={{ background: "none", border: `1px solid ${C.onPrimaryFaint}`, color: C.onPrimary, borderRadius: RADIUS.pill, padding: "8px 13px", fontSize: 13, visibility: scaled ? "visible" : "hidden" }}
               >
                 Reset
               </button>
@@ -2338,18 +2480,20 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
       )}
 
       {kind === "batch" && (
-        <div className="no-print" style={{ background: C.green, color: C.onPrimary, borderRadius: 16, padding: "16px 20px", marginBottom: 14 }}>
+        <div className="no-print k-panel" style={{ background: C.green, color: C.onPrimary, borderRadius: RADIUS.lg, padding: "16px 20px", marginBottom: 14 }}>
           <div style={{ fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.7, fontWeight: 600, marginBottom: 8 }}>Batch size</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {BATCH_OPTIONS.map((b) => (
               <button
                 key={b}
+                className="k-press"
+                aria-pressed={batch === b}
                 onClick={() => { clearOverride(); setBatch(b); }}
                 style={{
                   background: batch === b ? C.onPrimary : "transparent",
                   color: batch === b ? C.greenDeep : C.onPrimary,
                   border: `1px solid ${batch === b ? C.onPrimary : C.onPrimaryFaint}`,
-                  borderRadius: 999, padding: "9px 18px", fontSize: 14.5, fontWeight: 700,
+                  borderRadius: RADIUS.pill, padding: "9px 18px", fontSize: 14.5, fontWeight: 700,
                 }}
               >
                 ×{fmtFactor(b)}
@@ -2364,7 +2508,7 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
       )}
 
       {kind === "pan" && (
-        <div className="no-print" style={{ background: C.green, color: C.onPrimary, borderRadius: 16, padding: "16px 20px", marginBottom: 14 }}>
+        <div className="no-print k-panel" style={{ background: C.green, color: C.onPrimary, borderRadius: RADIUS.lg, padding: "16px 20px", marginBottom: 14 }}>
           <div style={{ fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.7, fontWeight: 600, marginBottom: 4 }}>Baking pan</div>
           <div style={{ fontSize: 12.5, opacity: 0.75, marginBottom: 10 }}>
             Written for {panLabel(recipe.basePan)} — pick your pan and the amounts rescale.
@@ -2379,12 +2523,14 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
               return (
                 <button
                   key={i}
+                  className="k-press"
+                  aria-pressed={active}
                   onClick={() => { clearOverride(); setPan(p); setCustomPan(false); }}
                   style={{
                     background: active ? C.onPrimary : "transparent",
                     color: active ? C.greenDeep : C.onPrimary,
                     border: `1px solid ${active ? C.onPrimary : C.onPrimaryFaint}`,
-                    borderRadius: 999, padding: "8px 15px", fontSize: 13, fontWeight: 600,
+                    borderRadius: RADIUS.pill, padding: "8px 15px", fontSize: 13, fontWeight: 600,
                   }}
                 >
                   {p.name || panLabel(p)}{i === 0 ? " (as written)" : ""}
@@ -2392,12 +2538,14 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
               );
             })}
             <button
+              className="k-press"
+              aria-pressed={customPan}
               onClick={() => setCustomPan(!customPan)}
               style={{
                 background: customPan ? C.onPrimary : "transparent",
                 color: customPan ? C.greenDeep : C.onPrimary,
                 border: `1px solid ${customPan ? C.onPrimary : C.onPrimaryFaint}`,
-                borderRadius: 999, padding: "8px 15px", fontSize: 13, fontWeight: 600,
+                borderRadius: RADIUS.pill, padding: "8px 15px", fontSize: 13, fontWeight: 600,
               }}
             >
               Custom…
@@ -2433,21 +2581,24 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
 
       <div className="no-print" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22, alignItems: "center" }}>
         <button
+          className="k-press"
           onClick={() => setCooking(true)}
-          style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "9px 20px", fontWeight: 600, fontSize: 13.5 }}
+          style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: RADIUS.pill, padding: "9px 20px", fontWeight: 600, fontSize: 13.5 }}
         >
           ▶ Cook
         </button>
         <button
+          className="k-press"
           onClick={() => onAddToShop(factor, scaleLabel)}
-          style={{ background: C.mustard, color: C.onAccent, border: "none", borderRadius: 999, padding: "9px 18px", fontWeight: 600, fontSize: 13.5 }}
+          style={{ background: C.mustard, color: C.onAccent, border: "none", borderRadius: RADIUS.pill, padding: "9px 18px", fontWeight: 600, fontSize: 13.5 }}
         >
           Add to shopping list · {scaleLabel}
         </button>
         {!pickDay ? (
           <button
+            className="k-press"
             onClick={() => setPickDay(true)}
-            style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontWeight: 500, fontSize: 13.5, color: C.ink }}
+            style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "9px 18px", fontWeight: 500, fontSize: 13.5, color: C.ink }}
           >
             Add to planner…
           </button>
@@ -2456,12 +2607,14 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
             {SLOTS.map(([id, label]) => (
               <button
                 key={id}
+                className="k-press"
+                aria-pressed={planSlot === id}
                 onClick={() => setPlanSlot(id)}
                 style={{
                   background: planSlot === id ? C.green : C.card,
                   color: planSlot === id ? C.onPrimary : C.inkSoft,
                   border: `1px solid ${planSlot === id ? C.green : C.line}`,
-                  borderRadius: 999, padding: "7px 13px", fontSize: 12.5, fontWeight: 600,
+                  borderRadius: RADIUS.pill, padding: "7px 13px", fontSize: 12.5, fontWeight: 600,
                 }}
               >
                 {label}
@@ -2471,16 +2624,18 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
             {weekDates(planWeek).map((iso) => (
               <button
                 key={iso}
+                className="k-press"
                 onClick={() => { onAddToPlan(iso, planSlot, kind === "serves" ? servings : factor); setPickDay(false); }}
-                style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 11px", fontSize: 12.5, fontWeight: 500, color: C.ink }}
+                style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 11px", fontSize: 12.5, fontWeight: 500, color: C.ink }}
               >
                 {dayNameOf(iso).slice(0, 3)} {parseISO(iso).getDate()}
               </button>
             ))}
             <button
+              className="k-press"
               onClick={() => setPlanWeek((w) => isoDate(addDays(parseISO(w), 7)))}
               aria-label="Next week"
-              style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 11px", fontSize: 12.5, color: C.inkSoft }}
+              style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 11px", fontSize: 12.5, color: C.inkSoft }}
             >
               {relativeWeek(planWeek) === "This week" ? "Next week →" : "→"}
             </button>
@@ -2488,21 +2643,24 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
           </div>
         )}
         <button
+          className="k-press"
           onClick={shareRecipe}
-          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontWeight: 500, fontSize: 13.5, color: C.ink }}
+          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "9px 18px", fontWeight: 500, fontSize: 13.5, color: C.ink }}
         >
           Share
         </button>
         <button
+          className="k-press"
           onClick={() => window.print()}
-          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontWeight: 500, fontSize: 13.5, color: C.ink }}
+          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "9px 18px", fontWeight: 500, fontSize: 13.5, color: C.ink }}
         >
           Print
         </button>
       </div>
 
       <div className="print-cols" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, alignItems: "start" }}>
-        <section className="print-plain" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px 20px" }}>
+        {/* container carries the depth; every row inside stays flat and opaque */}
+        <section className="print-plain k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.lg, padding: "18px 20px" }}>
           <h2 style={{ ...sectionHead(), marginBottom: prepOn && ticked.size > 0 ? 2 : 8 }}>Ingredients</h2>
           {prepOn && ticked.size > 0 && (
             <div className="no-print" style={{ fontSize: 12, color: ticked.size === recipe.ingredients.length ? C.green : C.inkSoft, fontWeight: 600, marginBottom: 8 }}>
@@ -2548,7 +2706,8 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
           </ul>
         </section>
 
-        <section className="print-plain" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px 20px" }}>
+        {/* container carries the depth; every row inside stays flat and opaque */}
+        <section className="print-plain k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.lg, padding: "18px 20px" }}>
           <h2 style={sectionHead()}>Method</h2>
           <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
             {recipe.steps.map((s, i) => (
@@ -2626,13 +2785,14 @@ function ReverseScaler({ recipe, kind, onApply, onReset }) {
     <div className="no-print" style={{ marginBottom: 14 }}>
       {!open ? (
         <button
+          className="k-press"
           onClick={() => setOpen(true)}
-          style={{ background: C.card, border: `1px dashed ${C.line}`, borderRadius: 12, padding: "9px 16px", fontSize: 13.5, color: C.inkSoft, fontWeight: 500 }}
+          style={{ background: C.card, border: `1px dashed ${C.line}`, borderRadius: RADIUS.sm, padding: "9px 16px", fontSize: 13.5, color: C.inkSoft, fontWeight: 500 }}
         >
           ⚖️ Scale from what I have…
         </button>
       ) : (
-        <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 16px" }}>
+        <div className="k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.md, padding: "14px 16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 10 }}>
             <span style={{ ...sectionHead(), margin: 0 }}>Scale from what I have</span>
             <button onClick={() => { setOpen(false); setError(""); }} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 13 }}>Close</button>
@@ -2641,6 +2801,7 @@ function ReverseScaler({ recipe, kind, onApply, onReset }) {
             <label style={{ fontSize: 12, color: C.inkSoft, flex: "1 1 200px" }}>
               I have
               <select
+                className="k-field"
                 value={pick}
                 onChange={(e) => { setPick(Number(e.target.value)); setError(""); }}
                 style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
@@ -2653,6 +2814,7 @@ function ReverseScaler({ recipe, kind, onApply, onReset }) {
             <label style={{ fontSize: 12, color: C.inkSoft, width: 130 }}>
               Amount{chosen && chosen.unit ? ` (${chosen.unit})` : ""}
               <input
+                className="k-field"
                 type="number"
                 min="0"
                 step="any"
@@ -2664,14 +2826,16 @@ function ReverseScaler({ recipe, kind, onApply, onReset }) {
               />
             </label>
             <button
+              className="k-press"
               onClick={apply}
-              style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "10px 20px", fontSize: 13.5, fontWeight: 600 }}
+              style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: RADIUS.pill, padding: "10px 20px", fontSize: 13.5, fontWeight: 600 }}
             >
               Scale
             </button>
             <button
+              className="k-press"
               onClick={() => { setAmount(""); setError(""); onReset(); }}
-              style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "10px 16px", fontSize: 13, color: C.inkSoft, fontWeight: 500 }}
+              style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "10px 16px", fontSize: 13, color: C.inkSoft, fontWeight: 500 }}
             >
               Reset
             </button>
@@ -2707,7 +2871,7 @@ function CostPerServe({ recipe, factor, kind, servings, override, prices }) {
   const perServe = kind === "serves" && serves > 0 ? cost.total / serves : null;
 
   return (
-    <div style={{ background: C.mustardSoft, borderRadius: 12, padding: "10px 16px", marginBottom: 14, display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+    <div className="k-flat" style={{ background: C.mustardSoft, borderRadius: RADIUS.sm, padding: "10px 16px", marginBottom: 14, display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
       <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 20, color: C.accentText }}>
         {perServe != null ? `${money(perServe)} a serve` : `${money(cost.total)} total`}
       </span>
@@ -2809,10 +2973,11 @@ function SimilarRecipes({ recipe, recipes, favIds, open }) {
         {scored.map(({ r, reasons }) => (
           <button
             key={r.id}
+            className="k-raise"
             onClick={() => { open(r.id); window.scrollTo({ top: 0 }); }}
             style={{
               textAlign: "left", background: C.card, border: `1px solid ${C.line}`,
-              borderRadius: 12, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column",
+              borderRadius: RADIUS.md, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column",
             }}
           >
             {r.photo && <img src={r.photo} alt="" style={{ width: "100%", height: 84, objectFit: "cover", display: "block" }} />}
@@ -2858,6 +3023,7 @@ const sectionHead = () => ({
 function Stepper({ label, onClick, disabled }) {
   return (
     <button
+      className="k-step"
       onClick={onClick}
       disabled={disabled}
       aria-label={label === "+" ? "Increase servings" : "Decrease servings"}
@@ -2896,12 +3062,14 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
         {[["dinner", `Dinner planner${total ? ` · ${total}` : ""}`], ["bake", `Bake planner${bakePlans.length ? ` · ${bakePlans.length}` : ""}`]].map(([id, label]) => (
           <button
             key={id}
+            className="k-press"
+            aria-pressed={mode === id}
             onClick={() => setMode(id)}
             style={{
               border: `1px solid ${mode === id ? C.green : C.line}`,
               background: mode === id ? C.green : C.card,
               color: mode === id ? C.onPrimary : C.inkSoft,
-              borderRadius: 999, padding: "9px 20px", fontSize: 14, fontWeight: 600,
+              borderRadius: RADIUS.pill, padding: "9px 20px", fontSize: 14, fontWeight: 600,
             }}
           >
             {label}
@@ -2929,39 +3097,43 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
+            className={total ? "k-press" : ""}
             onClick={() => addWeekToShop(dates)}
             disabled={!total}
-            style={{ background: total ? C.mustard : C.line, color: total ? C.onAccent : C.disabledText, border: "none", borderRadius: 999, padding: "9px 18px", fontWeight: 600, fontSize: 13.5, cursor: total ? "pointer" : "default" }}
+            style={{ background: total ? C.mustard : C.line, color: total ? C.onAccent : C.disabledText, border: "none", borderRadius: RADIUS.pill, padding: "9px 18px", fontWeight: 600, fontSize: 13.5, cursor: total ? "pointer" : "default" }}
           >
             Send week to shopping list
           </button>
           {/* single tap — undo toast restores the week, and only this week's dates are touched */}
           {total > 0 && (
-            <button onClick={() => clearWeek(dates)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Clear week</button>
+            <button className="k-press" onClick={() => clearWeek(dates)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "9px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Clear week</button>
           )}
         </div>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
         <button
+          className="k-press"
           onClick={() => shiftWeek(-1)}
           aria-label="Previous week"
-          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 14, fontWeight: 600, color: C.ink }}
+          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 14, fontWeight: 600, color: C.ink }}
         >
           ←
         </button>
         {weekStart !== thisMonday() && (
           <button
+            className="k-press"
             onClick={() => { setWeekStart(thisMonday()); setAddingAt(null); }}
-            style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}
+            style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}
           >
             Today
           </button>
         )}
         <button
+          className="k-press"
           onClick={() => shiftWeek(1)}
           aria-label="Next week"
-          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 14, fontWeight: 600, color: C.ink }}
+          style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 14, fontWeight: 600, color: C.ink }}
         >
           →
         </button>
@@ -2970,11 +3142,11 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
         </span>
       </div>
 
-      <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+      <div className="k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.md, padding: "12px 16px", marginBottom: 16 }}>
         <div style={{ ...sectionHead(), marginBottom: 8 }}>Week templates</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {templates.map((t) => (
-            <span key={t.id} style={{ display: "inline-flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: 999, background: C.bg, overflow: "hidden" }}>
+            <span key={t.id} className="k-press" style={{ display: "inline-flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, background: C.card, overflow: "hidden" }}>
               <button
                 onClick={() => onApplyTemplate(t, dates)}
                 title="Apply this template to the week on screen"
@@ -2993,9 +3165,10 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
           ))}
           {!savingTpl ? (
             <button
+              className={total ? "k-press" : ""}
               onClick={() => setSavingTpl(true)}
               disabled={!total}
-              style={{ background: "none", border: `1px dashed ${C.line}`, borderRadius: 999, padding: "7px 14px", fontSize: 13, color: total ? C.inkSoft : C.disabledText, fontWeight: 500, cursor: total ? "pointer" : "default" }}
+              style={{ background: total ? C.card : "none", border: `1px dashed ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 14px", fontSize: 13, color: total ? C.inkSoft : C.disabledText, fontWeight: 500, cursor: total ? "pointer" : "default" }}
             >
               + Save this week as a template
             </button>
@@ -3007,11 +3180,13 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
                 onChange={(e) => setTplName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && tplName.trim()) { onSaveTemplate(tplName.trim(), dates); setTplName(""); setSavingTpl(false); } }}
                 placeholder="e.g. Normal week"
-                style={{ padding: "7px 12px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.bg, fontSize: 13, width: 150 }}
+                className="k-field"
+                style={{ padding: "7px 12px", borderRadius: RADIUS.pill, border: `1px solid ${C.line}`, background: C.bg, fontSize: 13, width: 150 }}
               />
               <button
+                className="k-press"
                 onClick={() => { if (tplName.trim()) { onSaveTemplate(tplName.trim(), dates); setTplName(""); setSavingTpl(false); } }}
-                style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: 600 }}
+                style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: RADIUS.pill, padding: "7px 14px", fontSize: 13, fontWeight: 600 }}
               >
                 Save
               </button>
@@ -3033,10 +3208,11 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
           return (
             <div
               key={iso}
+              className="k-flat"
               style={{
                 background: C.card,
                 border: `1px solid ${isToday ? C.green : C.line}`,
-                borderRadius: 14, padding: "14px 16px",
+                borderRadius: RADIUS.lg, padding: "14px 16px",
               }}
             >
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
@@ -3056,8 +3232,10 @@ function PlannerPage({ plan, recipes, settings, bakePlans, setBakePlans, sendBak
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 11.5, letterSpacing: 0.8, textTransform: "uppercase", fontWeight: 700, color: C.headMut }}>{slotLabel}</span>
                       <button
+                        className="k-press"
+                        aria-expanded={adding}
                         onClick={() => setAddingAt(adding ? null : key)}
-                        style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 12px", fontSize: 12.5, color: C.inkSoft, fontWeight: 500 }}
+                        style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "4px 12px", fontSize: 12.5, color: C.inkSoft, fontWeight: 500 }}
                       >
                         {adding ? "Cancel" : "+ Add"}
                       </button>
@@ -3151,11 +3329,12 @@ function LeftoverSuggestions({ iso, slot, plan, recipes, household, addEntry }) 
       {suggestions.map(({ r, spare }) => (
         <button
           key={r.id}
+          className="k-press"
           onClick={() => addEntry(iso, slot, r.id, spare, true)}
           style={{
             display: "block", width: "100%", textAlign: "left",
             background: C.mustardSoft, border: `1px dashed ${C.mustard}`,
-            borderRadius: 10, padding: "8px 12px", marginTop: 6,
+            borderRadius: RADIUS.sm, padding: "8px 12px", marginTop: 6,
             fontSize: 13, color: C.accentText, lineHeight: 1.45,
           }}
         >
@@ -3184,14 +3363,15 @@ function StaleFavourites({ recipes, plan, dates, openRecipe }) {
   if (!stale.length) return null;
 
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+    <div className="k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.md, padding: "12px 16px", marginBottom: 16 }}>
       <div style={{ ...sectionHead(), marginBottom: 8 }}>Not made in a while</div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {stale.map(({ r, last }) => (
           <button
             key={r.id}
+            className="k-press"
             onClick={() => openRecipe(r.id)}
-            style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: 500, color: C.ink }}
+            style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 14px", fontSize: 13, fontWeight: 500, color: C.ink }}
           >
             {r.title}
             <span style={{ color: C.faint, fontWeight: 400 }}>
@@ -3220,13 +3400,14 @@ function BakePlanner({ recipes, plans, setPlans, sendToShop, onToast, openRecipe
 
   return (
     <div>
-      <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 16px", marginBottom: 16 }}>
+      <div className="k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.md, padding: "14px 16px", marginBottom: 16 }}>
         <div style={{ ...sectionHead(), marginBottom: 8 }}>Plan a bake</div>
         <input
+          className="k-field"
           value={draft.name}
           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
           placeholder="What's the occasion? e.g. Morning tea for the team"
-          style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, marginBottom: 10, fontSize: 14 }}
+          style={{ width: "100%", padding: "10px 14px", borderRadius: RADIUS.sm, border: `1px solid ${C.line}`, background: C.bg, marginBottom: 10, fontSize: 14 }}
         />
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <label style={{ fontSize: 12, color: C.inkSoft }}>Date<br />
@@ -3242,7 +3423,8 @@ function BakePlanner({ recipes, plans, setPlans, sendToShop, onToast, openRecipe
               setDraft({ name: "", date: "", time: "" });
               onToast("Bake plan created");
             }}
-            style={{ background: draft.date ? C.green : C.line, color: draft.date ? C.onPrimary : C.disabledText, border: "none", borderRadius: 999, padding: "10px 20px", fontSize: 13.5, fontWeight: 600, cursor: draft.date ? "pointer" : "default" }}
+            className={draft.date ? "k-press" : ""}
+            style={{ background: draft.date ? C.green : C.line, color: draft.date ? C.onPrimary : C.disabledText, border: "none", borderRadius: RADIUS.pill, padding: "10px 20px", fontSize: 13.5, fontWeight: 600, cursor: draft.date ? "pointer" : "default" }}
           >
             Create plan
           </button>
@@ -3259,7 +3441,7 @@ function BakePlanner({ recipes, plans, setPlans, sendToShop, onToast, openRecipe
         {sorted.map((pl) => {
           const entries = pl.entries.map((e) => ({ e, r: recipes.find((x) => x.id === e.recipeId) })).filter((x) => x.r);
           return (
-            <div key={pl.id} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 16px" }}>
+            <div key={pl.id} className="k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.lg, padding: "14px 16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
                 <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 17 }}>{pl.name}</div>
                 <span style={{ fontSize: 12.5, color: C.inkSoft, background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 11px" }}>
@@ -3321,8 +3503,9 @@ function BakePlanner({ recipes, plans, setPlans, sendToShop, onToast, openRecipe
                 </div>
               ) : (
                 <button
+                  className="k-press"
                   onClick={() => setPickerFor(pl.id)}
-                  style={{ marginTop: 8, background: "none", border: `1px dashed ${C.line}`, borderRadius: 999, padding: "6px 14px", fontSize: 12.5, color: C.inkSoft, fontWeight: 500 }}
+                  style={{ marginTop: 8, background: C.card, border: `1px dashed ${C.line}`, borderRadius: RADIUS.pill, padding: "6px 14px", fontSize: 12.5, color: C.inkSoft, fontWeight: 500 }}
                 >
                   + Add a recipe
                 </button>
@@ -3330,16 +3513,17 @@ function BakePlanner({ recipes, plans, setPlans, sendToShop, onToast, openRecipe
 
               <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                 <button
+                  className={entries.length ? "k-press" : ""}
                   onClick={() => sendToShop(pl)}
                   disabled={!entries.length}
-                  style={{ background: entries.length ? C.mustard : C.line, color: entries.length ? C.onAccent : C.disabledText, border: "none", borderRadius: 999, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: entries.length ? "pointer" : "default" }}
+                  style={{ background: entries.length ? C.mustard : C.line, color: entries.length ? C.onAccent : C.disabledText, border: "none", borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: entries.length ? "pointer" : "default" }}
                 >
                   Send ingredients to shopping list
                 </button>
                 {confirmDel !== pl.id ? (
-                  <button onClick={() => setConfirmDel(pl.id)} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Delete plan</button>
+                  <button className="k-press" onClick={() => setConfirmDel(pl.id)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Delete plan</button>
                 ) : (
-                  <button onClick={() => { setPlans(plans.filter((p) => p.id !== pl.id)); setConfirmDel(null); }} style={{ background: C.danger, border: "none", color: "#fff", borderRadius: 999, padding: "8px 16px", fontSize: 13, fontWeight: 600 }}>Confirm delete</button>
+                  <button className="k-press" onClick={() => { setPlans(plans.filter((p) => p.id !== pl.id)); setConfirmDel(null); }} style={{ background: C.danger, border: "none", color: "#fff", borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13, fontWeight: 600 }}>Confirm delete</button>
                 )}
               </div>
               <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>
@@ -3359,13 +3543,14 @@ function DayRecipePicker({ recipes, defaultServes, onPick }) {
     .filter((r) => !q || r.title.toLowerCase().includes(q.toLowerCase()))
     .sort((a, b) => a.title.localeCompare(b.title));
   return (
-    <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, marginBottom: 10, background: C.bg }}>
+    <div style={{ border: `1px solid ${C.line}`, borderRadius: RADIUS.sm, padding: 10, marginBottom: 10, background: C.bg }}>
       <input
+        className="k-field"
         autoFocus
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder={`Search your ${recipes.length} recipes`}
-        style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.card, marginBottom: 8 }}
+        style={{ width: "100%", padding: "8px 12px", borderRadius: RADIUS.xs, border: `1px solid ${C.line}`, background: C.card, marginBottom: 8 }}
       />
       <div style={{ maxHeight: 280, overflowY: "auto", overscrollBehavior: "contain" }}>
       {matches.map((r) => {
@@ -3393,6 +3578,7 @@ function DayRecipePicker({ recipes, defaultServes, onPick }) {
 function MiniStep({ label, onClick, disabled }) {
   return (
     <button
+      className="k-step"
       onClick={onClick}
       disabled={disabled}
       aria-label={label === "+" ? "Increase servings" : "Decrease servings"}
@@ -3447,31 +3633,32 @@ function ShoppingPage({ items, prices = {}, onSetPrice, toggle, remove, addManua
         <h1 style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 28, margin: 0 }}>Shopping list</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {open.length > 0 && (
-            <button onClick={shareList} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "8px 16px", fontSize: 13, fontWeight: 600 }}>
+            <button className="k-press" onClick={shareList} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13, fontWeight: 600 }}>
               Share list
             </button>
           )}
           {done.length > 0 && (
-            <button onClick={clearChecked} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 15px", fontSize: 13, fontWeight: 500 }}>
+            <button className="k-press" onClick={clearChecked} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "8px 15px", fontSize: 13, fontWeight: 500, color: C.ink }}>
               Clear ticked · {done.length}
             </button>
           )}
           {/* single tap — undo toast restores the list */}
           {items.length > 0 && (
-            <button onClick={clearAll} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 15px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Clear all</button>
+            <button className="k-press" onClick={clearAll} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "8px 15px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Clear all</button>
           )}
         </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
         <input
+          className="k-field"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
           placeholder='Add an item — e.g. "2 l milk" or "dog treats for Fred"'
-          style={{ flex: 1, padding: "11px 15px", borderRadius: 12, border: `1px solid ${C.line}`, background: C.card }}
+          style={{ flex: 1, padding: "11px 15px", borderRadius: RADIUS.sm, border: `1px solid ${C.line}`, background: C.card }}
         />
-        <button onClick={submit} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 12, padding: "0 20px", fontWeight: 600, fontSize: 14 }}>
+        <button className="k-press" onClick={submit} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: RADIUS.sm, padding: "0 20px", fontWeight: 600, fontSize: 14 }}>
           Add
         </button>
       </div>
@@ -3513,7 +3700,9 @@ function ShopRow({ item, prices = {}, onSetPrice, toggle, remove }) {
   };
 
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 8, opacity: item.checked ? 0.55 : 1 }}>
+    /* deliberately flat: this is scannable data you read mid-shop, so it keeps
+       a plain border rather than the soft elevation used on chrome */
+    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.sm, padding: "10px 14px", marginBottom: 8, opacity: item.checked ? 0.55 : 1 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <button
           onClick={() => toggle(item.id)}
@@ -3550,22 +3739,24 @@ function ShopRow({ item, prices = {}, onSetPrice, toggle, remove }) {
       {editing && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
           <input
+            className="k-field"
             autoFocus
             type="number" min="0" step="0.01"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }}
             placeholder="12.00"
-            style={{ width: 100, padding: "8px 12px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, fontSize: 14 }}
+            style={{ width: 100, padding: "8px 12px", borderRadius: RADIUS.sm, border: `1px solid ${C.line}`, background: C.bg, fontSize: 14 }}
           />
           <select
+            className="k-field"
             value={unit}
             onChange={(e) => setUnit(e.target.value)}
-            style={{ padding: "8px 12px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, fontSize: 14 }}
+            style={{ padding: "8px 12px", borderRadius: RADIUS.sm, border: `1px solid ${C.line}`, background: C.bg, fontSize: 14 }}
           >
             {PRICE_UNITS.map(([u, label]) => <option key={u} value={u}>{label}</option>)}
           </select>
-          <button onClick={commit} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "8px 16px", fontSize: 13, fontWeight: 600 }}>Save</button>
+          <button className="k-press" onClick={commit} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13, fontWeight: 600 }}>Save</button>
           <button onClick={() => setEditing(false)} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 13 }}>Cancel</button>
         </div>
       )}
@@ -3686,7 +3877,7 @@ function EditPage({ recipe, settings, knownCategories = CATEGORIES, onCancel, on
               style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, resize: "vertical", lineHeight: 1.6, marginBottom: 8 }}
             />
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <button onClick={runImport} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "8px 18px", fontSize: 13.5, fontWeight: 600 }}>
+              <button className="k-press" onClick={runImport} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "8px 18px", fontSize: 13.5, fontWeight: 600 }}>
                 Fill in the form
               </button>
               <button onClick={() => { setPasteOpen(false); setPasteMsg(""); }} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 13 }}>Close</button>
@@ -3741,7 +3932,7 @@ function EditPage({ recipe, settings, knownCategories = CATEGORIES, onCancel, on
         {photo ? (
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <img src={photo} alt="Recipe" style={{ width: 110, height: 78, objectFit: "cover", borderRadius: 10, border: `1px solid ${C.line}` }} />
-            <label style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+            <label className="k-press" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
               Replace
               <input type="file" accept="image/*" onChange={handlePhoto} style={{ display: "none" }} />
             </label>
@@ -3818,10 +4009,10 @@ function EditPage({ recipe, settings, knownCategories = CATEGORIES, onCancel, on
       {error && <div style={{ color: C.danger, fontSize: 14, marginBottom: 12, fontWeight: 500 }}>{error}</div>}
 
       <div style={{ display: "flex", gap: 10 }}>
-        <button onClick={submit} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "12px 26px", fontWeight: 600, fontSize: 15 }}>
+        <button className="k-press" onClick={submit} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "12px 26px", fontWeight: 600, fontSize: 15 }}>
           Save recipe
         </button>
-        <button onClick={onCancel} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "12px 22px", fontSize: 15, color: C.inkSoft }}>
+        <button className="k-press" onClick={onCancel} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "12px 22px", fontSize: 15, color: C.inkSoft }}>
           Cancel
         </button>
       </div>
@@ -3840,7 +4031,7 @@ function Field({ label, hint, children }) {
 }
 
 const inputStyle = () => ({
-  width: "100%", padding: "10px 14px", borderRadius: 10,
+  width: "100%", padding: "10px 14px", borderRadius: RADIUS.sm,
   border: `1px solid ${C.line}`, background: C.card,
 });
 
@@ -3960,7 +4151,7 @@ function TipsPage({ kitchenTimers, setKitchenTimers, myTips, onAddTip, onRemoveT
   const renderGroup = (g) => {
     const isOpen = open.has(g.group);
     return (
-      <section key={g.group} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "4px 20px" }}>
+      <section key={g.group} className="k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.lg, padding: "4px 20px" }}>
         <button
           onClick={() => toggle(g.group)}
           aria-expanded={isOpen}
@@ -4001,7 +4192,7 @@ function TipsPage({ kitchenTimers, setKitchenTimers, myTips, onAddTip, onRemoveT
     <div style={{ maxWidth: 680 }}>
       <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
         {[["tips", "Tips"], ["tools", `Tools${kitchenTimers.filter((t) => t.running).length ? ` · ${kitchenTimers.filter((t) => t.running).length} ⏱` : ""}`]].map(([id, label]) => (
-          <button
+          <button className="k-press"
             key={id}
             onClick={() => setViewMode(id)}
             style={{
@@ -4026,7 +4217,7 @@ function TipsPage({ kitchenTimers, setKitchenTimers, myTips, onAddTip, onRemoveT
 
       <div style={{ ...sectionHead(), fontSize: 14, color: C.ink, marginBottom: 10 }}>My tips</div>
       <div style={{ display: "grid", gap: 12, marginBottom: 26 }}>
-        <section style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "4px 20px" }}>
+        <section className="k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.lg, padding: "4px 20px" }}>
           <button
             onClick={() => toggle("My tips")}
             aria-expanded={open.has("My tips")}
@@ -4068,7 +4259,7 @@ function TipsPage({ kitchenTimers, setKitchenTimers, myTips, onAddTip, onRemoveT
                 ))}
               </ul>
               {!adding ? (
-                <button
+                <button className="k-press"
                   onClick={() => setAdding(true)}
                   style={{ marginTop: myTips.length ? 12 : 0, background: "none", border: `1px dashed ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 13, color: C.inkSoft, fontWeight: 500 }}
                 >
@@ -4090,7 +4281,7 @@ function TipsPage({ kitchenTimers, setKitchenTimers, myTips, onAddTip, onRemoveT
                     style={{ width: "100%", padding: "9px 13px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, resize: "vertical", lineHeight: 1.5, fontSize: 14 }}
                   />
                   <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                    <button onClick={submitTip} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "8px 18px", fontSize: 13.5, fontWeight: 600 }}>
+                    <button className="k-press" onClick={submitTip} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "8px 18px", fontSize: 13.5, fontWeight: 600 }}>
                       Save tip
                     </button>
                     <button onClick={() => { setAdding(false); setNewTitle(""); setNewBody(""); }} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 13 }}>
@@ -4140,7 +4331,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
     <div style={{ maxWidth: 620 }}>
       <h1 style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 28, margin: "0 0 20px" }}>Settings</h1>
 
-      <section style={settingsCard()}>
+      <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Appearance</h2>
         <p style={settingsHint()}>Pick a colour theme, and whether the app follows your device's light or dark setting.</p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
@@ -4149,13 +4340,15 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
             return (
               <button
                 key={id}
+                className="k-press"
+                aria-pressed={active}
                 onClick={() => update({ theme: id })}
                 style={{
                   display: "flex", alignItems: "center", gap: 8,
                   border: `1px solid ${active ? C.green : C.line}`,
-                  background: active ? C.green : C.bg,
+                  background: active ? C.green : C.card,
                   color: active ? C.onPrimary : C.inkSoft,
-                  borderRadius: 999, padding: "8px 16px", fontSize: 13.5, fontWeight: 600,
+                  borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13.5, fontWeight: 600,
                 }}
               >
                 <span aria-hidden="true" style={{ display: "inline-flex" }}>
@@ -4173,12 +4366,14 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
             return (
               <button
                 key={id}
+                className="k-press"
+                aria-pressed={active}
                 onClick={() => update({ mode: id })}
                 style={{
                   border: `1px solid ${active ? C.green : C.line}`,
-                  background: active ? C.green : C.bg,
+                  background: active ? C.green : C.card,
                   color: active ? C.onPrimary : C.inkSoft,
-                  borderRadius: 999, padding: "8px 16px", fontSize: 13.5, fontWeight: 600,
+                  borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13.5, fontWeight: 600,
                 }}
               >
                 {label}
@@ -4188,7 +4383,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         </div>
       </section>
 
-      <section style={settingsCard()}>
+      <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Household serves</h2>
         <p style={settingsHint()}>
           Every recipe opens already scaled to this number, and meals added to the planner default to it. Choose “As written” to open recipes at their original serves.
@@ -4199,12 +4394,14 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
             return (
               <button
                 key={String(n)}
+                className="k-press"
+                aria-pressed={active}
                 onClick={() => update({ defaultServes: n })}
                 style={{
                   border: `1px solid ${active ? C.green : C.line}`,
-                  background: active ? C.green : C.bg,
+                  background: active ? C.green : C.card,
                   color: active ? C.onPrimary : C.inkSoft,
-                  borderRadius: 999, padding: "8px 16px", fontSize: 13.5, fontWeight: 600,
+                  borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13.5, fontWeight: 600,
                 }}
               >
                 {n == null ? "As written" : n}
@@ -4214,7 +4411,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         </div>
       </section>
 
-      <section style={settingsCard()}>
+      <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Prep check-off</h2>
         <p style={settingsHint()}>
           Show a tick box beside each ingredient on recipe pages, so you can check things off as you measure and prep them. Ticks are per cooking session — they clear when you leave the recipe or change the scaling.
@@ -4225,12 +4422,14 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
             return (
               <button
                 key={label}
+                className="k-press"
+                aria-pressed={active}
                 onClick={() => update({ prepTicks: val })}
                 style={{
                   border: `1px solid ${active ? C.green : C.line}`,
-                  background: active ? C.green : C.bg,
+                  background: active ? C.green : C.card,
                   color: active ? C.onPrimary : C.inkSoft,
-                  borderRadius: 999, padding: "8px 20px", fontSize: 13.5, fontWeight: 600,
+                  borderRadius: RADIUS.pill, padding: "8px 20px", fontSize: 13.5, fontWeight: 600,
                 }}
               >
                 {label}
@@ -4240,7 +4439,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         </div>
       </section>
 
-      <section style={settingsCard()}>
+      <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Oven type</h2>
         <p style={settingsHint()}>
           Recipes are written for fan-forced. Switch to conventional and every oven temperature in the methods displays 20°C higher automatically.
@@ -4251,12 +4450,14 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
             return (
               <button
                 key={id}
+                className="k-press"
+                aria-pressed={active}
                 onClick={() => update({ oven: id })}
                 style={{
                   border: `1px solid ${active ? C.green : C.line}`,
-                  background: active ? C.green : C.bg,
+                  background: active ? C.green : C.card,
                   color: active ? C.onPrimary : C.inkSoft,
-                  borderRadius: 999, padding: "8px 18px", fontSize: 13.5, fontWeight: 600,
+                  borderRadius: RADIUS.pill, padding: "8px 18px", fontSize: 13.5, fontWeight: 600,
                 }}
               >
                 {label}
@@ -4266,7 +4467,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         </div>
       </section>
 
-      <section style={settingsCard()}>
+      <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>My pans</h2>
         <p style={settingsHint()}>
           Save the tins you actually own and they'll appear as one-tap options on every pan-scaled baking recipe.
@@ -4274,7 +4475,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {myPans.map((p) =>
             confirmPanDel === p.id ? (
-              <button
+              <button className="k-press"
                 key={p.id}
                 onClick={() => { onRemovePan(p.id); setConfirmPanDel(null); }}
                 style={{ background: C.danger, border: "none", color: "#fff", borderRadius: 999, padding: "7px 16px", fontSize: 13, fontWeight: 600 }}
@@ -4295,7 +4496,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
             )
           )}
           {!panForm && (
-            <button
+            <button className="k-press"
               onClick={() => setPanForm({ name: "", shape: "round", diameter: 20, quantity: 1 })}
               style={{ background: "none", border: `1px dashed ${C.line}`, borderRadius: 999, padding: "7px 14px", fontSize: 13, color: C.inkSoft, fontWeight: 500 }}
             >
@@ -4356,7 +4557,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
               <label style={{ fontSize: 12, color: C.inkSoft }}>How many<br /><input type="number" min="1" max="6" value={panForm.quantity || 1} onChange={(e) => setPanForm({ ...panForm, quantity: Number(e.target.value) })} style={{ marginTop: 4, width: 80, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.card, fontSize: 14 }} /></label>
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button
+              <button className="k-press"
                 onClick={() => {
                   const { name, ...geom } = panForm;
                   const ok = (geom.shape === "round" && geom.diameter > 0) || (geom.shape === "square" && geom.side > 0) || (geom.shape === "bundt" && geom.cups > 0) || (geom.shape === "dutch" && geom.litres > 0) || ((geom.shape === "rectangle" || geom.shape === "loaf") && geom.length > 0 && geom.width > 0);
@@ -4374,7 +4575,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         )}
       </section>
 
-      <section style={settingsCard()}>
+      <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Pantry staples</h2>
         <p style={settingsHint()}>
           Things you always have in. Anything on this list is quietly left off the shopping list when you send a recipe or a whole week over — you can still add one by hand any time, and typing it into the shopping list always wins.
@@ -4416,7 +4617,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
             <div style={{ fontSize: 12, color: C.faint, marginBottom: 6 }}>Common ones — tap to add:</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {SUGGESTED_STAPLES.filter((s) => !pantry.includes(s)).map((s) => (
-                <button
+                <button className="k-press"
                   key={s}
                   onClick={() => onAddStaple(s)}
                   style={{ background: "none", border: `1px dashed ${C.line}`, borderRadius: 999, padding: "5px 12px", fontSize: 12.5, color: C.inkSoft, fontWeight: 500 }}
@@ -4429,7 +4630,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         )}
       </section>
 
-      <section style={settingsCard()}>
+      <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Price book</h2>
         <p style={settingsHint()}>
           Rough prices for the things you buy often. Recipes then show an estimated cost per serve — only once enough of the ingredients have a price,
@@ -4489,7 +4690,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
               {PRICE_UNITS.map(([u, label]) => <option key={u} value={u}>{label}</option>)}
             </select>
           </label>
-          <button
+          <button className="k-press"
             onClick={addPrice}
             style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "10px 20px", fontSize: 13.5, fontWeight: 600 }}
           >
@@ -4501,19 +4702,19 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         </p>
       </section>
 
-      <section style={settingsCard()}>
+      <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Backup & transfer</h2>
         <p style={settingsHint()}>
           Data lives on this device only. Export a backup file here, then import it on another device (or after reinstalling) to move your whole kitchen across — recipes, photos, planner, templates, shopping list and settings.
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
+          <button className="k-press"
             onClick={onExport}
             style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 600 }}
           >
             Export backup
           </button>
-          <label style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 500, cursor: "pointer" }}>
+          <label className="k-press" style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 500, cursor: "pointer" }}>
             Import backup…
             <input
               type="file"
@@ -4528,27 +4729,27 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         </p>
       </section>
 
-      <section style={settingsCard()}>
+      <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Your data</h2>
         <p style={settingsHint()}>
           Recipes, the planner, the shopping list and these settings are saved on this device automatically.
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
+          <button className="k-press"
             onClick={restoreStarters}
-            style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 500 }}
+            style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "9px 18px", fontSize: 13.5, fontWeight: 500 }}
           >
             Restore starter recipes
           </button>
           {!confirmReset ? (
-            <button
+            <button className="k-press"
               onClick={() => setConfirmReset(true)}
               style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontSize: 13.5, color: C.danger, fontWeight: 500 }}
             >
               Reset everything…
             </button>
           ) : (
-            <button
+            <button className="k-press"
               onClick={() => { resetAll(); setConfirmReset(false); }}
               style={{ background: C.danger, border: "none", color: "#fff", borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 600 }}
             >
@@ -4562,7 +4763,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
 }
 
 const settingsCard = () => ({
-  background: C.card, border: `1px solid ${C.line}`, borderRadius: 16,
+  background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.lg,
   padding: "18px 20px", marginBottom: 14,
 });
 
@@ -4915,16 +5116,18 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
       aria-label={`Cooking ${recipe.title}, step ${idx + 1} of ${steps.length}`}
       style={{ position: "fixed", inset: 0, background: C.bg, color: C.ink, zIndex: 60, display: "flex", flexDirection: "column", fontFamily: "'Instrument Sans', system-ui, sans-serif", outline: "none" }}
     >
-      <div style={{ background: C.green, color: C.onPrimary, padding: "calc(14px + env(safe-area-inset-top)) 20px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+      {/* the step area scrolls beneath this bar, so blur has something to act on.
+          safe-area padding is unchanged — no new chrome above the Dynamic Island. */}
+      <div style={{ background: C.green, color: C.onPrimary, padding: "calc(14px + env(safe-area-inset-top)) 20px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, boxShadow: C.elev2, position: "relative", zIndex: 2 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 17, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{recipe.title}</div>
           <div style={{ fontSize: 12.5, opacity: 0.75 }}>{contextLabel} · Step {idx + 1} of {steps.length}</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-          <button onClick={() => setShowIng(!showIng)} style={{ background: "none", border: `1px solid ${C.onPrimaryFaint}`, color: C.onPrimary, borderRadius: 999, padding: "7px 14px", fontSize: 13 }}>
+          <button className="k-press" onClick={() => setShowIng(!showIng)} style={{ background: "none", border: `1px solid ${C.onPrimaryFaint}`, color: C.onPrimary, borderRadius: 999, padding: "7px 14px", fontSize: 13 }}>
             Ingredients
           </button>
-          <button onClick={onClose} aria-label="Exit cook mode" style={{ background: "none", border: `1px solid ${C.onPrimaryFaint}`, color: C.onPrimary, borderRadius: 999, padding: "7px 14px", fontSize: 13 }}>
+          <button className="k-press" onClick={onClose} aria-label="Exit cook mode" style={{ background: "none", border: `1px solid ${C.onPrimaryFaint}`, color: C.onPrimary, borderRadius: 999, padding: "7px 14px", fontSize: 13 }}>
             ✕ Exit
           </button>
         </div>
@@ -4935,7 +5138,8 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
       </div>
 
       {showIng && (
-        <div style={{ background: C.card, borderBottom: `1px solid ${C.line}`, padding: "12px 20px", maxHeight: "38vh", overflowY: "auto" }}>
+        /* opaque on purpose — these are amounts you read while cooking */
+        <div className="k-flat" style={{ background: C.card, borderBottom: `1px solid ${C.line}`, padding: "12px 20px", maxHeight: "38vh", overflowY: "auto", position: "relative", zIndex: 1 }}>
           {recipe.ingredients.map((it, i) => {
             const amt = it.amount != null ? formatAmount(it.amount * factor, it.unit) : null;
             const done = ticked && ticked.has(i);
@@ -4968,7 +5172,7 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
         <div style={{ fontSize: 24, lineHeight: 1.45, fontWeight: 500 }}>{stepText}</div>
 
         {stepSeconds && !timer && (
-          <button
+          <button className="k-press"
             onClick={() => setTimer({ total: stepSeconds, left: stepSeconds, running: true, done: false })}
             style={{ marginTop: 24, alignSelf: "flex-start", background: C.mustard, color: C.onAccent, border: "none", borderRadius: 999, padding: "12px 22px", fontSize: 15, fontWeight: 700 }}
           >
@@ -4978,20 +5182,20 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
 
         {timer && (
           <div style={{ marginTop: 24, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{
+            <div className="k-panel" style={{
               background: timer.done ? C.mustard : C.card,
               border: `1px solid ${timer.done ? C.mustard : C.line}`,
               color: timer.done ? C.onAccent : C.ink,
-              borderRadius: 16, padding: "12px 22px",
+              borderRadius: RADIUS.lg, padding: "12px 22px",
               fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 34, fontVariantNumeric: "tabular-nums",
               animation: timer.done ? "timerDone 1s ease 3" : "none",
             }}>
               {timer.done ? "Time's up!" : fmtClock(timer.left)}
             </div>
             {!timer.done && (
-              <button
+              <button className="k-press"
                 onClick={() => setTimer({ ...timer, running: !timer.running })}
-                style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "10px 18px", fontSize: 14, fontWeight: 600 }}
+                style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "10px 18px", fontSize: 14, fontWeight: 600 }}
               >
                 {timer.running ? "Pause" : "Resume"}
               </button>
@@ -5017,25 +5221,33 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 10, padding: "16px 20px calc(16px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, background: C.card }}>
+      {/* home-indicator inset preserved exactly; the glass sits above the
+          scrolling step area, never inside the safe-area padding */}
+      <div
+        className="k-glass"
+        style={{ display: "flex", gap: 10, padding: "16px 20px calc(16px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.glassEdge}`, background: C.card, boxShadow: C.elev3, position: "relative", zIndex: 2 }}
+      >
         <button
+          className="k-press"
           onClick={goPrev}
           disabled={idx === 0}
-          style={{ flex: 1, background: C.bg, border: `1px solid ${C.line}`, color: idx === 0 ? C.disabledText : C.ink, borderRadius: 14, padding: "15px 10px", fontSize: 15, fontWeight: 600 }}
+          style={{ flex: 1, background: C.bg, border: `1px solid ${C.line}`, color: idx === 0 ? C.disabledText : C.ink, borderRadius: RADIUS.md, padding: "15px 10px", fontSize: 15, fontWeight: 600 }}
         >
           ← Back
         </button>
         {!last ? (
           <button
+            className="k-press"
             onClick={goNext}
-            style={{ flex: 2, background: C.green, color: C.onPrimary, border: "none", borderRadius: 14, padding: "15px 10px", fontSize: 15, fontWeight: 700 }}
+            style={{ flex: 2, background: C.green, color: C.onPrimary, border: "none", borderRadius: RADIUS.md, padding: "15px 10px", fontSize: 15, fontWeight: 700 }}
           >
             Next step →
           </button>
         ) : (
           <button
+            className="k-press"
             onClick={onCooked}
-            style={{ flex: 2, background: C.mustard, color: C.onAccent, border: "none", borderRadius: 14, padding: "15px 10px", fontSize: 15, fontWeight: 700 }}
+            style={{ flex: 2, background: C.mustard, color: C.onAccent, border: "none", borderRadius: RADIUS.md, padding: "15px 10px", fontSize: 15, fontWeight: 700 }}
           >
             ✓ Finish & mark cooked
           </button>
@@ -5122,7 +5334,7 @@ const SEASONS = {
 
 function ToolCard({ title, open, toggle, children }) {
   return (
-    <section style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "4px 20px" }}>
+    <section className="k-flat" style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.lg, padding: "4px 20px" }}>
       <button
         onClick={toggle}
         aria-expanded={open}
@@ -5216,7 +5428,7 @@ function ToolsPage({ timers, setTimers }) {
             <label style={{ ...toolLabel, color: C.inkSoft, width: 90 }}>Minutes<br />
               <input type="number" min="1" max="600" value={tMins} onChange={(e) => setTMins(e.target.value)} style={{ ...toolInput(), marginTop: 4 }} />
             </label>
-            <button
+            <button className="k-press"
               onClick={() => {
                 const m = Math.max(1, parseInt(tMins, 10) || 0);
                 setTimers([...timers, { id: uid(), name: tName.trim() || `${m} min timer`, total: m * 60, left: m * 60, running: true, done: false }]);
@@ -5238,7 +5450,7 @@ function ToolsPage({ timers, setTimers }) {
                 {t.done ? "Done!" : fmtClock(t.left)}
               </span>
               {!t.done && (
-                <button onClick={() => setTimers(timers.map((x) => x.id === t.id ? { ...x, running: !x.running } : x))} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "6px 14px", fontSize: 12.5, fontWeight: 600 }}>
+                <button className="k-press" onClick={() => setTimers(timers.map((x) => x.id === t.id ? { ...x, running: !x.running } : x))} style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "6px 14px", fontSize: 12.5, fontWeight: 600 }}>
                   {t.running ? "Pause" : "Resume"}
                 </button>
               )}
@@ -5408,7 +5620,7 @@ function CloudSyncCard({ user, status, onSignIn, onSignOut, onSyncNow }) {
               placeholder="you@example.com"
               style={{ flex: "1 1 200px", padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, fontSize: 14 }}
             />
-            <button
+            <button className="k-press"
               onClick={() => email.includes("@") && onSignIn(email.trim())}
               style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "10px 20px", fontSize: 13.5, fontWeight: 600 }}
             >
@@ -5423,10 +5635,10 @@ function CloudSyncCard({ user, status, onSignIn, onSignOut, onSyncNow }) {
           </p>
           {status && <p style={{ ...settingsHint(), fontWeight: 600, color: C.green }}>{status}</p>}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={onSyncNow} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 600 }}>
+            <button className="k-press" onClick={onSyncNow} style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 600 }}>
               Sync now
             </button>
-            <button onClick={onSignOut} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 500 }}>
+            <button className="k-press" onClick={onSignOut} style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "9px 18px", fontSize: 13.5, fontWeight: 500 }}>
               Sign out
             </button>
           </div>
