@@ -5160,10 +5160,16 @@ function fmtClock(s) {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
+// browsers cap concurrent AudioContexts (~6) — a fresh one per beep() call went
+// silent after several timer alarms fired in a session, so reuse a single lazy instance
+let sharedAudioCtx = null;
+
 function beep() {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
-    const ctx = new Ctx();
+    if (!sharedAudioCtx) sharedAudioCtx = new Ctx();
+    const ctx = sharedAudioCtx;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
     [0, 0.3, 0.6].forEach((t) => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
