@@ -1289,6 +1289,8 @@ export default function TheKitchen() {
   const [cat, setCat] = useState("All");
   const [toast, setToast] = useState("");
   const [kitchenTimers, setKitchenTimers] = useState([]); // {id, name, total, left, running, done}
+  // { title, subtitle?, lines: [{key,name,unit,amount,group?,isStaple}], onConfirm } | null
+  const [shopPicker, setShopPicker] = useState(null);
   const [sysDark, setSysDark] = useState(
     () => typeof window !== "undefined" && !!window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
   );
@@ -1433,7 +1435,9 @@ export default function TheKitchen() {
 
   /* --- shopping list merging --- */
 
-  /* force = the cook typed this in by hand, so pantry staples are honoured rather than skipped */
+  /* force = the amount was deliberately chosen — typed by hand, or confirmed
+     via the shopping picker below — so the automatic pantry-staple filter
+     is skipped rather than second-guessing a choice already made */
   const mergeIntoShop = (items, force = false) => {
     const next = [...shop];
     let skipped = 0;
@@ -1455,16 +1459,34 @@ export default function TheKitchen() {
     return skipped;
   };
 
-  const stapleNote = (skipped) =>
-    skipped ? ` · ${skipped} pantry staple${skipped > 1 ? "s" : ""} skipped` : "";
+  /* every send-to-shop path routes through this picker rather than merging
+     straight away, so "I already have some of these" is a one-tap uncheck
+     instead of needing to mark something a permanent pantry staple */
+  const openShopPicker = (title, subtitle, lines, onAdded) => {
+    setShopPicker({
+      title, subtitle, lines,
+      onConfirm: (selected) => {
+        mergeIntoShop(selected, true);
+        setShopPicker(null);
+        onAdded(selected.length, lines.length);
+      },
+    });
+  };
 
   const addRecipeToShop = (recipe, factor, label) => {
-    const skipped = mergeIntoShop(recipe.ingredients.map((i) => ({ ...i, amount: i.amount != null ? i.amount * factor : null })));
-    setToast(`${recipe.title} (${label}) added to shopping list${stapleNote(skipped)}`);
+    const lines = recipe.ingredients.map((it, i) => ({
+      key: `${recipe.id}-${i}`,
+      name: it.name, unit: it.unit, amount: it.amount != null ? it.amount * factor : null,
+      isStaple: isPantryStaple(it.name, pantry),
+    }));
+    openShopPicker(`Add “${recipe.title}” to the shopping list`, label, lines, (added, total) => {
+      const note = added < total ? ` · ${added} of ${total} ingredients` : "";
+      setToast(`${recipe.title} (${label}) added to shopping list${note}`);
+    });
   };
 
   const addWeekToShop = (dates) => {
-    const items = [];
+    const lines = [];
     let count = 0;
     for (const iso of dates) {
       const day = dayAt(plan, iso);
@@ -1474,13 +1496,21 @@ export default function TheKitchen() {
         if (!r) continue;
         count++;
         const factor = scalingKind(r) === "serves" ? e.servings / r.baseServings : e.servings;
-        for (const i of r.ingredients) items.push({ ...i, amount: i.amount != null ? i.amount * factor : null });
+        r.ingredients.forEach((it, i) => {
+          lines.push({
+            key: `${iso}-${e.id}-${i}`, group: r.title,
+            name: it.name, unit: it.unit, amount: it.amount != null ? it.amount * factor : null,
+            isStaple: isPantryStaple(it.name, pantry),
+          });
+        });
       }
     }
     if (!count) { setToast("Nothing planned this week — add some meals first"); return; }
-    const skipped = mergeIntoShop(items);
-    setToast(`Ingredients for ${count} meal${count > 1 ? "s" : ""} added to shopping list${stapleNote(skipped)}`);
-    setTab("shopping");
+    openShopPicker("Send week to shopping list", `${count} meal${count > 1 ? "s" : ""} planned`, lines, (added, total) => {
+      const note = added < total ? ` · ${added} of ${total} ingredients` : "";
+      setToast(`Ingredients for ${count} meal${count > 1 ? "s" : ""} added to shopping list${note}`);
+      setTab("shopping");
+    });
   };
 
   const addToPlan = (iso, slot, recipeId, servings, leftover = false) => {
@@ -1492,16 +1522,24 @@ export default function TheKitchen() {
   };
 
   const sendBakePlanToShop = (pl) => {
-    const items = [];
+    const lines = [];
     for (const e of pl.entries) {
       const r = recipes.find((x) => x.id === e.recipeId);
       if (!r) continue;
-      for (const i of r.ingredients) items.push({ ...i, amount: i.amount != null ? i.amount * e.factor : null });
+      r.ingredients.forEach((it, i) => {
+        lines.push({
+          key: `${e.id}-${i}`, group: r.title,
+          name: it.name, unit: it.unit, amount: it.amount != null ? it.amount * e.factor : null,
+          isStaple: isPantryStaple(it.name, pantry),
+        });
+      });
     }
-    if (!items.length) { setToast("Add some recipes to the plan first"); return; }
-    const skipped = mergeIntoShop(items);
-    setToast(`Ingredients for “${pl.name}” added to shopping list${stapleNote(skipped)}`);
-    setTab("shopping");
+    if (!lines.length) { setToast("Add some recipes to the plan first"); return; }
+    openShopPicker(`Send “${pl.name}” to shopping list`, null, lines, (added, total) => {
+      const note = added < total ? ` · ${added} of ${total} ingredients` : "";
+      setToast(`Ingredients for “${pl.name}” added to shopping list${note}`);
+      setTab("shopping");
+    });
   };
 
   /* --- week templates --- */
@@ -2016,6 +2054,168 @@ export default function TheKitchen() {
           )}
         </div>
       )}
+
+      {shopPicker && (
+        <ShopPickerModal
+          title={shopPicker.title}
+          subtitle={shopPicker.subtitle}
+          lines={shopPicker.lines}
+          onConfirm={shopPicker.onConfirm}
+          onCancel={() => setShopPicker(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- shopping picker ----------
+
+   Every "send to shopping list" action (a single recipe, a whole week, a
+   bake plan) opens here instead of merging straight away. Lines default to
+   checked, except pantry staples, which default off — but everything stays
+   individually toggleable, so a staple you happen to be out of this week
+   is a one-tap fix instead of a trip to Settings. */
+
+function ShopPickerModal({ title, subtitle, lines, onConfirm, onCancel }) {
+  const [checked, setChecked] = useState(() => new Set(lines.filter((l) => !l.isStaple).map((l) => l.key)));
+
+  const toggle = (key) =>
+    setChecked((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+  const selectAll = () => setChecked(new Set(lines.map((l) => l.key)));
+  const selectNone = () => setChecked(new Set());
+
+  const groups = [];
+  const byGroup = new Map();
+  for (const l of lines) {
+    const g = l.group || null;
+    if (!byGroup.has(g)) { byGroup.set(g, []); groups.push(g); }
+    byGroup.get(g).push(l);
+  }
+
+  /* same focus-trap pattern as cook mode: focus moves in on open, Tab stays
+     inside the dialog, Escape cancels, and focus returns to the trigger */
+  const shellRef = useRef(null);
+  useEffect(() => {
+    const prevFocus = document.activeElement;
+    if (shellRef.current) shellRef.current.focus();
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); return; }
+      if (e.key !== "Tab" || !shellRef.current) return;
+      const focusable = shellRef.current.querySelectorAll(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const lastEl = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); lastEl.focus(); }
+      else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (prevFocus && prevFocus.focus) prevFocus.focus();
+    };
+  }, [onCancel]);
+
+  const confirm = () => {
+    onConfirm(lines.filter((l) => checked.has(l.key)).map((l) => ({ name: l.name, unit: l.unit, amount: l.amount })));
+  };
+
+  return (
+    <div
+      ref={shellRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      className="no-print"
+      style={{ position: "fixed", inset: 0, background: C.bg, color: C.ink, zIndex: 70, display: "flex", flexDirection: "column", fontFamily: "'Instrument Sans', system-ui, sans-serif", outline: "none" }}
+    >
+      <div style={{ background: C.green, color: C.onPrimary, padding: "calc(16px + env(safe-area-inset-top)) 20px 16px", boxShadow: C.elev2, position: "relative", zIndex: 2 }}>
+        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 18, lineHeight: 1.3 }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 12.5, opacity: 0.75, marginTop: 2 }}>{subtitle}</div>}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderBottom: `1px solid ${C.line}` }}>
+        <button
+          className="k-press"
+          onClick={selectAll}
+          disabled={checked.size === lines.length}
+          style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "6px 14px", fontSize: 12.5, fontWeight: 600, opacity: checked.size === lines.length ? 0.5 : 1 }}
+        >
+          Select all
+        </button>
+        <button
+          className="k-press"
+          onClick={selectNone}
+          disabled={checked.size === 0}
+          style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "6px 14px", fontSize: 12.5, fontWeight: 600, opacity: checked.size === 0 ? 0.5 : 1 }}
+        >
+          Select none
+        </button>
+        <span style={{ marginLeft: "auto", fontSize: 12.5, color: C.inkSoft }}>{checked.size} of {lines.length} selected</span>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "4px 20px 20px" }}>
+        {groups.map((g) => (
+          <div key={g || "_"} style={{ marginBottom: 10 }}>
+            {g && <div style={{ ...sectionHead(), margin: "14px 0 2px" }}>{g}</div>}
+            {byGroup.get(g).map((l) => {
+              const done = checked.has(l.key);
+              return (
+                <button
+                  key={l.key}
+                  onClick={() => toggle(l.key)}
+                  aria-pressed={done}
+                  style={{
+                    display: "flex", alignItems: "flex-start", gap: 10, width: "100%", textAlign: "left",
+                    background: "none", border: "none", padding: "9px 0", borderBottom: `1px solid ${C.line}`,
+                    fontSize: 15, color: C.ink,
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 20, height: 20, borderRadius: 6, flexShrink: 0, marginTop: 1,
+                      border: `2px solid ${done ? C.green : C.line}`, background: done ? C.green : "transparent",
+                      color: C.onPrimary, fontSize: 12, lineHeight: 1, display: "grid", placeItems: "center",
+                    }}
+                  >
+                    {done ? "✓" : ""}
+                  </span>
+                  <span style={{ flex: 1, lineHeight: 1.4, opacity: done ? 1 : 0.55, transition: "opacity 0.15s" }}>
+                    {l.amount != null ? (
+                      <>
+                        <span style={{ fontWeight: 600 }}>{formatAmount(l.amount, l.unit)}{l.unit ? ` ${l.unit}` : ""}</span>{" "}
+                        {l.name}
+                      </>
+                    ) : l.name}
+                    {l.isStaple && <span style={{ color: C.inkSoft, fontWeight: 500 }}> · pantry staple</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      <div className="k-glass" style={{ display: "flex", gap: 10, padding: "16px 20px calc(16px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.glassEdge}`, background: C.card, boxShadow: C.elev3, position: "relative", zIndex: 2 }}>
+        <button
+          className="k-press"
+          onClick={onCancel}
+          style={{ flex: 1, background: C.bg, color: C.ink, border: `1px solid ${C.line}`, borderRadius: RADIUS.md, padding: "13px 10px", fontSize: 15, fontWeight: 600 }}
+        >
+          Cancel
+        </button>
+        <button
+          className="k-press"
+          onClick={confirm}
+          disabled={checked.size === 0}
+          style={{ flex: 2, background: checked.size ? C.green : C.line, color: checked.size ? C.onPrimary : C.disabledText, border: "none", borderRadius: RADIUS.md, padding: "13px 10px", fontSize: 15, fontWeight: 700 }}
+        >
+          Add {checked.size} item{checked.size !== 1 ? "s" : ""}
+        </button>
+      </div>
     </div>
   );
 }
@@ -2199,22 +2399,33 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
         </div>
       )}
 
-      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
+      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", alignItems: "stretch" }}>
         {filtered.map((r) => (
-          <div key={r.id} style={{ position: "relative" }}>
+          <div key={r.id} style={{ position: "relative", height: "100%" }}>
             <button
               className="k-raise"
               onClick={() => open(r.id)}
               style={{
-                width: "100%", textAlign: "left", background: C.card, border: `1px solid ${C.line}`,
+                width: "100%", height: "100%", textAlign: "left", background: C.card, border: `1px solid ${C.line}`,
                 borderRadius: RADIUS.lg, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column",
               }}
             >
-              {r.photo && (
-                <img src={r.photo} alt="" style={{ width: "100%", height: 120, objectFit: "cover", display: "block" }} />
+              {/* every card gets an image band, even without a photo — so cards
+                  without one don't end up shorter than their neighbours */}
+              {r.photo ? (
+                <img src={r.photo} alt="" style={{ width: "100%", height: 120, objectFit: "cover", display: "block", flexShrink: 0 }} />
+              ) : (
+                <div style={{ width: "100%", height: 120, flexShrink: 0, background: C.mustardSoft }} />
               )}
-              <div style={{ padding: "14px 44px 12px 16px", display: "flex", flexDirection: "column", gap: 7 }}>
-                <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 600, fontSize: 19, lineHeight: 1.2, color: C.ink }}>{r.title}</div>
+              <div style={{ flex: 1, padding: "14px 44px 12px 16px", display: "flex", flexDirection: "column", gap: 7 }}>
+                {/* clamped to 2 lines so a long title can't push the chip row
+                    to a different height card-to-card */}
+                <div style={{
+                  fontFamily: "'Bricolage Grotesque'", fontWeight: 600, fontSize: 19, lineHeight: 1.25, color: C.ink,
+                  display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", minHeight: "2.5em",
+                }}>
+                  {r.title}
+                </div>
                 <div style={{ display: "flex", gap: 8, fontSize: 12.5, color: C.inkSoft, alignItems: "center", flexWrap: "wrap" }}>
                   {r.category && <span style={{ background: C.mustardSoft, color: C.accentText, padding: "2px 9px", borderRadius: 999, fontWeight: 600 }}>{r.category}</span>}
                   <span style={{ border: `1px solid ${skillColor(skillOf(r))}`, color: skillColor(skillOf(r)), padding: "1px 8px", borderRadius: 999, fontWeight: 600, fontSize: 11.5 }}>{skillOf(r)}</span>
@@ -2224,12 +2435,12 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
                   <span>{scalingKind(r) === "serves" ? `Serves ${r.baseServings}` : scalingKind(r) === "pan" ? panLabel(r.basePan) : (r.yield || "Batch")}</span>
                   {r.time && <span>· {r.time}</span>}
                 </div>
-                {(r.rating > 0 || (r.cooked || []).length > 0) && (
-                  <div style={{ display: "flex", gap: 8, fontSize: 12, color: C.inkSoft, alignItems: "center" }}>
-                    {r.rating > 0 && <span style={{ color: C.mustard, letterSpacing: 1 }}>{"★".repeat(r.rating)}</span>}
-                    {(r.cooked || []).length > 0 && <span>last made {timeAgo(r.cooked[r.cooked.length - 1])}</span>}
-                  </div>
-                )}
+                {/* pinned to the bottom of the card so the footer lines up
+                    across a row even when one card has no rating/history */}
+                <div style={{ marginTop: "auto", display: "flex", gap: 8, fontSize: 12, color: C.inkSoft, alignItems: "center", minHeight: "1.4em" }}>
+                  {r.rating > 0 && <span style={{ color: C.mustard, letterSpacing: 1 }}>{"★".repeat(r.rating)}</span>}
+                  {(r.cooked || []).length > 0 && <span>last made {timeAgo(r.cooked[r.cooked.length - 1])}</span>}
+                </div>
               </div>
             </button>
             <button className="k-press"
