@@ -2410,12 +2410,8 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
                 borderRadius: RADIUS.lg, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column",
               }}
             >
-              {/* every card gets an image band, even without a photo — so cards
-                  without one don't end up shorter than their neighbours */}
-              {r.photo ? (
+              {r.photo && (
                 <img src={r.photo} alt="" style={{ width: "100%", height: 120, objectFit: "cover", display: "block", flexShrink: 0 }} />
-              ) : (
-                <div style={{ width: "100%", height: 120, flexShrink: 0, background: C.mustardSoft }} />
               )}
               <div style={{ flex: 1, padding: "14px 44px 12px 16px", display: "flex", flexDirection: "column", gap: 7 }}>
                 {/* clamped to 2 lines so a long title can't push the chip row
