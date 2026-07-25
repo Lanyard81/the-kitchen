@@ -1333,20 +1333,26 @@ export default function TheKitchen() {
 
   useEffect(() => {
     if (!kitchenTimers.some((t) => t.running)) return;
-    const iv = setInterval(() => {
+    // driven off endsAt (wall clock), not a per-tick decrement — setInterval
+    // drifts/throttles when the tab is backgrounded, so each tick and every
+    // visibilitychange re-derive "left" from Date.now() instead of trusting the count
+    const tick = () => {
       setKitchenTimers((prev) =>
         prev.map((t) => {
           if (!t.running) return t;
-          if (t.left <= 1) {
+          const remaining = Math.ceil((t.endsAt - Date.now()) / 1000);
+          if (remaining <= 0) {
             beep();
             setToast(`⏱ "${t.name}" timer is done!`);
-            return { ...t, left: 0, running: false, done: true };
+            return { ...t, left: 0, running: false, done: true, endsAt: null };
           }
-          return { ...t, left: t.left - 1 };
+          return t.left === remaining ? t : { ...t, left: remaining };
         })
       );
-    }, 1000);
-    return () => clearInterval(iv);
+    };
+    const iv = setInterval(tick, 1000);
+    document.addEventListener("visibilitychange", tick);
+    return () => { clearInterval(iv); document.removeEventListener("visibilitychange", tick); };
   }, [kitchenTimers.some((t) => t.running)]);
 
   useEffect(() => {
@@ -5366,23 +5372,28 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
   const anyRunning = Object.values(timers).some((t) => t && t.running);
   useEffect(() => {
     if (!anyRunning) return;
-    const t = setInterval(() => {
+    // endsAt-driven, same as the kitchen-timers effect above — avoids drift/freeze
+    // from setInterval throttling while the tab is backgrounded mid-cook
+    const tick = () => {
       setTimers((prev) => {
         let changed = false;
         const next = {};
         for (const [k, v] of Object.entries(prev)) {
           if (v && v.running) {
-            if (v.left <= 1) { beep(); next[k] = { ...v, left: 0, running: false, done: true }; }
-            else next[k] = { ...v, left: v.left - 1 };
-            changed = true;
+            const remaining = Math.ceil((v.endsAt - Date.now()) / 1000);
+            if (remaining <= 0) { beep(); next[k] = { ...v, left: 0, running: false, done: true, endsAt: null }; changed = true; }
+            else if (v.left !== remaining) { next[k] = { ...v, left: remaining }; changed = true; }
+            else next[k] = v;
           } else {
             next[k] = v;
           }
         }
         return changed ? next : prev;
       });
-    }, 1000);
-    return () => clearInterval(t);
+    };
+    const t = setInterval(tick, 1000);
+    document.addEventListener("visibilitychange", tick);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", tick); };
   }, [anyRunning]);
 
   const last = idx === steps.length - 1;
@@ -5500,7 +5511,7 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
 
         {stepSeconds && !timer && (
           <button className="k-press"
-            onClick={() => setTimer({ total: stepSeconds, left: stepSeconds, running: true, done: false })}
+            onClick={() => setTimer({ total: stepSeconds, left: stepSeconds, running: true, done: false, endsAt: Date.now() + stepSeconds * 1000 })}
             style={{ marginTop: 24, alignSelf: "flex-start", background: C.mustard, color: C.onAccent, border: "none", borderRadius: 999, padding: "12px 22px", fontSize: 15, fontWeight: 700 }}
           >
             ⏱ Start {Math.round(stepSeconds / 60) >= 60 ? `${Math.round(stepSeconds / 3600 * 10) / 10} hr` : `${Math.round(stepSeconds / 60)} min`} timer
@@ -5521,7 +5532,7 @@ function CookMode({ recipe, factor, contextLabel, settings, ticked, onToggleTick
             </div>
             {!timer.done && (
               <button className="k-press"
-                onClick={() => setTimer({ ...timer, running: !timer.running })}
+                onClick={() => setTimer({ ...timer, running: !timer.running, endsAt: timer.running ? null : Date.now() + timer.left * 1000 })}
                 style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "10px 18px", fontSize: 14, fontWeight: 600 }}
               >
                 {timer.running ? "Pause" : "Resume"}
@@ -5758,7 +5769,8 @@ function ToolsPage({ timers, setTimers }) {
             <button className="k-press"
               onClick={() => {
                 const m = Math.max(1, parseInt(tMins, 10) || 0);
-                setTimers([...timers, { id: uid(), name: tName.trim() || `${m} min timer`, total: m * 60, left: m * 60, running: true, done: false }]);
+                const total = m * 60;
+                setTimers([...timers, { id: uid(), name: tName.trim() || `${m} min timer`, total, left: total, running: true, done: false, endsAt: Date.now() + total * 1000 }]);
                 setTName("");
               }}
               style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "10px 20px", fontSize: 13.5, fontWeight: 600 }}
@@ -5777,7 +5789,7 @@ function ToolsPage({ timers, setTimers }) {
                 {t.done ? "Done!" : fmtClock(t.left)}
               </span>
               {!t.done && (
-                <button className="k-press" onClick={() => setTimers(timers.map((x) => x.id === t.id ? { ...x, running: !x.running } : x))} style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "6px 14px", fontSize: 12.5, fontWeight: 600 }}>
+                <button className="k-press" onClick={() => setTimers(timers.map((x) => x.id === t.id ? (x.running ? { ...x, running: false, endsAt: null } : { ...x, running: true, endsAt: Date.now() + x.left * 1000 }) : x))} style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "6px 14px", fontSize: 12.5, fontWeight: 600 }}>
                   {t.running ? "Pause" : "Resume"}
                 </button>
               )}
