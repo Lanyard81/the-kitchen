@@ -1351,8 +1351,9 @@ export default function TheKitchen() {
 
   useEffect(() => {
     if (!toast) return;
-    // undo toasts hang around long enough to actually be tapped
-    const t = setTimeout(() => setToast(""), toast && toast.undo ? 5200 : 2400);
+    // undo toasts hang around long enough to actually be tapped; a severe
+    // one (e.g. resetting everything) gets a longer window via toast.duration
+    const t = setTimeout(() => setToast(""), toast && toast.undo ? (toast.duration || 5200) : 2400);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -1382,7 +1383,7 @@ export default function TheKitchen() {
   const persistSettings = (next) => { setSettings(next); save(K_SETTINGS, next); };
 
   /* undo window: one tap to put things back exactly as they were */
-  const showUndo = (text, restore) => setToast({ text, undo: restore });
+  const showUndo = (text, restore, duration) => setToast({ text, undo: restore, duration });
 
   const toggleFav = (id) => {
     persistFavs(favs.includes(id) ? favs.filter((f) => f !== id) : [...favs, id]);
@@ -1571,7 +1572,12 @@ export default function TheKitchen() {
     persistPlan(next);
     showUndo(`Applied “${tpl.name}”`, () => persistPlan(prev));
   };
-  const deleteTemplate = (id) => persistTemplates(templates.filter((t) => t.id !== id));
+  const deleteTemplate = (id) => {
+    const prev = templates;
+    const gone = templates.find((t) => t.id === id);
+    persistTemplates(templates.filter((t) => t.id !== id));
+    showUndo(`Deleted “${gone ? gone.name : "template"}”`, () => persistTemplates(prev));
+  };
 
   /* --- cloud sync (Supabase) --- */
 
@@ -1820,64 +1826,47 @@ export default function TheKitchen() {
 
       {/* safe-area padding preserved exactly — the shadow casts downward onto
           the content below and adds no chrome above the Dynamic Island */}
-      <header className="no-print" style={{ background: C.green, color: C.onPrimary, padding: "calc(18px + env(safe-area-inset-top)) 20px 0", boxShadow: C.elev2, position: "relative", zIndex: 2 }}>
-        <div style={{ maxWidth: 860, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-            <button
-              onClick={() => { setTab("recipes"); setView({ page: "list" }); }}
-              style={{ background: "none", border: "none", color: "inherit", padding: 0, textAlign: "left" }}
-            >
-              <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 28, lineHeight: 1 }}>The Kitchen</div>
-              <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Everyday cooking, scaled to whoever turns up</div>
-            </button>
-            <button
-              className="k-press"
-              onClick={() => { setTab("recipes"); setView({ page: "edit" }); }}
-              style={{ background: C.mustard, color: C.onAccent, border: "none", borderRadius: RADIUS.pill, padding: "10px 18px", fontWeight: 600, fontSize: 14 }}
-            >
-              + New recipe
-            </button>
-          </div>
-          <nav style={{ display: "flex", gap: 2, marginTop: 14 }}>
-            {[
-              ["recipes", "Recipes", 0],
-              ["planner", "Plan", plannedCount],
-              ["shopping", "Shop", unchecked],
-              ["tips", "Tips", kitchenTimers.filter((t) => t.running).length],
-              ["settings", "Settings", 0],
-            ].map(([id, label, badge]) => (
-              <button
-                key={id}
-                className={`k-tab ${tab === id ? "is-on" : "is-off"}`}
-                aria-current={tab === id ? "page" : undefined}
-                onClick={() => { setTab(id); if (id === "recipes") setView({ page: "list" }); }}
-                style={{
-                  flex: 1, minWidth: 0,
-                  background: tab === id ? C.bg : "transparent",
-                  color: tab === id ? C.ink : C.onPrimarySoft,
-                  border: "none", borderRadius: "12px 12px 0 0", padding: "11px 2px",
-                  fontSize: 12.5, fontWeight: 600,
-                  display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
-                }}
-              >
-                {label}
-                {badge > 0 && (
-                  <span style={{ background: C.mustard, color: C.onAccent, borderRadius: 999, fontSize: 10, fontWeight: 700, minWidth: 16, height: 16, display: "grid", placeItems: "center", padding: "0 4px", lineHeight: 1 }}>
-                    {badge}
-                  </span>
-                )}
-              </button>
-            ))}
-          </nav>
+      <header className="no-print" style={{ background: C.green, color: C.onPrimary, padding: "calc(18px + env(safe-area-inset-top)) 20px 18px", boxShadow: C.elev2, position: "relative", zIndex: 2 }}>
+        <div style={{ maxWidth: 860, margin: "0 auto", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <button
+            onClick={() => { setTab("recipes"); setView({ page: "list" }); }}
+            style={{ background: "none", border: "none", color: "inherit", padding: 0, textAlign: "left", minWidth: 0 }}
+          >
+            <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 28, lineHeight: 1 }}>The Kitchen</div>
+            <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Everyday cooking, scaled to whoever turns up</div>
+          </button>
+          {/* Settings is reachable but no longer a full nav tab — it's rarely
+              touched after first setup, and didn't deserve equal billing with
+              Recipes/Plan/Shop in the primary bar */}
+          <button
+            className="k-press"
+            aria-label="Settings"
+            aria-current={tab === "settings" ? "page" : undefined}
+            onClick={() => setTab("settings")}
+            style={{
+              width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
+              border: `1px solid ${tab === "settings" ? "transparent" : C.onPrimaryFaint}`,
+              background: tab === "settings" ? C.bg : "transparent",
+              color: tab === "settings" ? C.ink : C.onPrimary,
+              display: "grid", placeItems: "center", fontSize: 19,
+            }}
+          >
+            ⚙
+          </button>
         </div>
       </header>
 
-      <main className="app-main" style={{ maxWidth: 860, margin: "0 auto", padding: "24px 20px 80px" }}>
+      <main className="app-main" style={{ maxWidth: 860, margin: "0 auto", padding: "24px 20px calc(88px + env(safe-area-inset-bottom))" }}>
         {tab === "recipes" && view.page === "list" && (
           <ListPage
             recipes={recipes} favs={favs} toggleFav={toggleFav}
             query={query} setQuery={setQuery} cat={cat} setCat={setCat}
-            open={(id) => setView({ page: "recipe", id })}
+            onNew={() => setView({ page: "edit" })}
+            open={(id) => {
+              // back should say where it's actually going back to, not always "All recipes"
+              const label = cat !== "All" && cat !== "★ Favourites" ? cat : query.trim() ? "Search results" : "All recipes";
+              setView({ page: "recipe", id, from: { label, action: () => setView({ page: "list" }) } });
+            }}
           />
         )}
         {tab === "recipes" && view.page === "recipe" && current && (
@@ -1888,10 +1877,12 @@ export default function TheKitchen() {
             myPans={myPans}
             allRecipes={recipes}
             favIds={favs}
-            onOpenRecipe={(id) => setView({ page: "recipe", id })}
+            // similar-recipes is a real push: back from B returns to A, back from A returns wherever A came from
+            onOpenRecipe={(id) => setView({ page: "recipe", id, from: { label: current.title, action: () => setView(view) } })}
             fav={favs.includes(current.id)}
             toggleFav={() => toggleFav(current.id)}
-            onBack={() => setView({ page: "list" })}
+            onBack={() => (view.from ? view.from.action() : setView({ page: "list" }))}
+            backLabel={view.from ? view.from.label : "All recipes"}
             onEdit={() => setView({ page: "edit", id: current.id })}
             onDelete={() => deleteRecipe(current.id)}
             onDuplicate={() => duplicateRecipe(current)}
@@ -1942,7 +1933,10 @@ export default function TheKitchen() {
               showUndo("Week cleared", () => persistPlan(prev));
             }}
             addWeekToShop={addWeekToShop}
-            openRecipe={(id) => { setTab("recipes"); setView({ page: "recipe", id }); }}
+            openRecipe={(id) => {
+              setTab("recipes");
+              setView({ page: "recipe", id, from: { label: "Planner", action: () => setTab("planner") } });
+            }}
           />
         )}
         {tab === "tips" && (
@@ -1951,7 +1945,11 @@ export default function TheKitchen() {
             setKitchenTimers={setKitchenTimers}
             myTips={myTips}
             onAddTip={(tip) => { persistMyTips([...myTips, { id: uid(), ...tip }]); setToast("Tip saved"); }}
-            onRemoveTip={(id) => persistMyTips(myTips.filter((t) => t.id !== id))}
+            onRemoveTip={(id) => {
+              const prev = myTips;
+              persistMyTips(myTips.filter((t) => t.id !== id));
+              showUndo("Tip deleted", () => persistMyTips(prev));
+            }}
           />
         )}
         {tab === "settings" && (
@@ -1960,7 +1958,12 @@ export default function TheKitchen() {
             update={(patch) => persistSettings({ ...settings, ...patch })}
             myPans={myPans}
             onAddPan={(pan) => { persistMyPans([...myPans, { id: uid(), ...pan }]); setToast(`Saved pan: ${pan.name || panLabel(pan)}`); }}
-            onRemovePan={(id) => persistMyPans(myPans.filter((p) => p.id !== id))}
+            onRemovePan={(id) => {
+              const prev = myPans;
+              const gone = myPans.find((p) => p.id === id);
+              persistMyPans(myPans.filter((p) => p.id !== id));
+              showUndo(`Deleted “${gone ? (gone.name || panLabel(gone)) : "pan"}”`, () => persistMyPans(prev));
+            }}
             prices={prices}
             onSetPrice={setPrice}
             pantry={pantry}
@@ -1979,6 +1982,9 @@ export default function TheKitchen() {
               setToast(`Restored ${missing.length} starter recipe${missing.length > 1 ? "s" : ""}`);
             }}
             resetAll={() => {
+              // the most severe action in the app — full snapshot, and a
+              // longer undo window than the usual 5.2s given the stakes
+              const prev = { recipes, plan, shop, favs, templates, myTips, myPans, bakePlans, pantry, prices, settings };
               persistRecipes(SEED_RECIPES);
               persistPlan({});
               persistShop([]);
@@ -1990,7 +1996,19 @@ export default function TheKitchen() {
               persistPantry([]);
               persistPrices({});
               persistSettings(DEFAULT_SETTINGS);
-              setToast("Everything reset to a fresh kitchen");
+              showUndo("Everything reset to a fresh kitchen", () => {
+                persistRecipes(prev.recipes);
+                persistPlan(prev.plan);
+                persistShop(prev.shop);
+                persistFavs(prev.favs);
+                persistTemplates(prev.templates);
+                persistMyTips(prev.myTips);
+                persistMyPans(prev.myPans);
+                persistBakePlans(prev.bakePlans);
+                persistPantry(prev.pantry);
+                persistPrices(prev.prices);
+                persistSettings(prev.settings);
+              }, 10000);
             }}
           />
         )}
@@ -2026,13 +2044,60 @@ export default function TheKitchen() {
         )}
       </main>
 
+      {/* primary nav lives at the bottom — the thumb-reachable zone on a
+          one-handed phone — rather than at the top of the screen. CookMode
+          and ShopPickerModal are full-viewport overlays with a higher
+          z-index, so they correctly paint over this without any special
+          casing here. */}
+      <nav className="no-print" style={{
+        position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 40,
+        background: C.card, borderTop: `1px solid ${C.line}`,
+        // k-panel's shadow tokens cast downward, which is wrong for a bar
+        // pinned to the bottom edge — this needs to cast upward instead
+        boxShadow: resolvedMode === "dark"
+          ? "0 -2px 6px rgba(0,0,0,0.35), 0 -8px 20px rgba(0,0,0,0.25)"
+          : `0 -2px 6px ${hexA(C.ink, 0.05)}, 0 -8px 20px ${hexA(C.ink, 0.06)}`,
+        padding: "6px 10px calc(6px + env(safe-area-inset-bottom))",
+      }}>
+        <div style={{ display: "flex", gap: 4, maxWidth: 860, margin: "0 auto" }}>
+          {[
+            ["recipes", "Recipes", 0],
+            ["planner", "Plan", plannedCount],
+            ["shopping", "Shop", unchecked],
+            ["tips", "Tips & Tools", kitchenTimers.filter((t) => t.running).length],
+          ].map(([id, label, badge]) => (
+            <button
+              key={id}
+              className={`k-tab ${tab === id ? "is-on" : "is-off"}`}
+              aria-current={tab === id ? "page" : undefined}
+              onClick={() => { setTab(id); if (id === "recipes") setView({ page: "list" }); }}
+              style={{
+                flex: 1, minWidth: 0,
+                background: tab === id ? C.green : "transparent",
+                color: tab === id ? C.onPrimary : C.inkSoft,
+                border: "none", borderRadius: RADIUS.md, padding: "9px 2px",
+                fontSize: 11.5, fontWeight: 600, lineHeight: 1.25,
+                display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
+              }}
+            >
+              {label}
+              {badge > 0 && (
+                <span style={{ background: C.mustard, color: C.onAccent, borderRadius: 999, fontSize: 10, fontWeight: 700, minWidth: 16, height: 16, display: "grid", placeItems: "center", padding: "0 4px", lineHeight: 1 }}>
+                  {badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </nav>
+
       {toast && (
         <div
           className="no-print"
           role="status"
           aria-live="polite"
           style={{
-            position: "fixed", bottom: "calc(24px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)",
+            position: "fixed", bottom: "calc(78px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)",
             background: C.greenDeep, color: C.onPrimary, padding: toast.undo ? "10px 12px 10px 22px" : "12px 22px", borderRadius: RADIUS.pill,
             fontSize: 14, fontWeight: 500, boxShadow: `${C.elev3}, ${C.rim}`,
             animation: "toastIn 0.2s ease", zIndex: 90, maxWidth: "90vw", textAlign: "center",
@@ -2222,7 +2287,7 @@ function ShopPickerModal({ title, subtitle, lines, onConfirm, onCancel }) {
 
 /* ---------- recipe list ---------- */
 
-function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open }) {
+function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open, onNew }) {
   const [fridgeOpen, setFridgeOpen] = useState(false);
   const [skillFilter, setSkillFilter] = useState("All");
   const [dietFilters, setDietFilters] = useState([]);
@@ -2241,6 +2306,19 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
 
   return (
     <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <h1 style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 28, margin: 0 }}>Recipes</h1>
+        {/* moved off the global header — it was permanently visible on every
+            tab for a low-frequency action, in the hardest one-handed reach
+            corner of the screen. It belongs here, where it's relevant. */}
+        <button
+          className="k-press"
+          onClick={onNew}
+          style={{ background: C.mustard, color: C.onAccent, border: "none", borderRadius: RADIUS.pill, padding: "9px 18px", fontWeight: 600, fontSize: 13.5, flexShrink: 0 }}
+        >
+          + New recipe
+        </button>
+      </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         <input
           className="k-field"
@@ -2392,7 +2470,9 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
       </div>
 
       {filtered.length === 0 && (
-        <div style={{ color: C.inkSoft, padding: "40px 0", textAlign: "center" }}>
+        // same dashed instructional-card treatment as the Shopping list and
+        // Bake planner's empty states — this is the same kind of moment
+        <div style={{ color: C.inkSoft, textAlign: "center", padding: "40px 20px", background: C.card, border: `1px dashed ${C.line}`, borderRadius: RADIUS.md, lineHeight: 1.6, fontSize: 14 }}>
           {cat === "★ Favourites" && skillFilter === "All"
             ? "No favourites yet — tap the star on any recipe."
             : "No recipes match those filters. Try a different skill level or category."}
@@ -2413,7 +2493,7 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
               {r.photo && (
                 <img src={r.photo} alt="" style={{ width: "100%", height: 120, objectFit: "cover", display: "block", flexShrink: 0 }} />
               )}
-              <div style={{ flex: 1, padding: "14px 44px 12px 16px", display: "flex", flexDirection: "column", gap: 7 }}>
+              <div style={{ flex: 1, padding: "14px 50px 12px 16px", display: "flex", flexDirection: "column", gap: 7 }}>
                 {/* clamped to 2 lines so a long title can't push the chip row
                     to a different height card-to-card */}
                 <div style={{
@@ -2443,12 +2523,14 @@ function ListPage({ recipes, favs, toggleFav, query, setQuery, cat, setCat, open
               onClick={() => toggleFav(r.id)}
               aria-label={favs.includes(r.id) ? "Remove from favourites" : "Add to favourites"}
               style={{
-                position: "absolute", top: 8, right: 8, border: "none",
+                position: "absolute", top: 4, right: 4, border: "none",
                 background: r.photo ? "rgba(0,0,0,0.35)" : "none", borderRadius: RADIUS.pill,
                 /* inkSoft, not faint: the empty star is an interactive control and
                    needs 3:1 — faint measured 2.98 against the card. Matches the
-                   recipe page's own favourite toggle. */
-                fontSize: 20, lineHeight: 1, color: favs.includes(r.id) ? C.mustard : (r.photo ? "#FFFFFF" : C.inkSoft), padding: 6,
+                   recipe page's own favourite toggle. 44x44 total footprint (22px
+                   glyph + 11px padding) to meet the iOS minimum tap-target size. */
+                fontSize: 22, lineHeight: 1, color: favs.includes(r.id) ? C.mustard : (r.photo ? "#FFFFFF" : C.inkSoft), padding: 11,
+                display: "grid", placeItems: "center", width: 44, height: 44,
               }}
             >
               {favs.includes(r.id) ? "★" : "☆"}
@@ -2507,7 +2589,7 @@ function WhatCanIMake({ recipes, open }) {
 
 /* ---------- recipe view ---------- */
 
-function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [], favIds = [], onOpenRecipe, fav, toggleFav, onBack, onEdit, onDelete, onDuplicate, onToast, onAddToShop, onAddToPlan, onPatch, onCooked }) {
+function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [], favIds = [], onOpenRecipe, fav, toggleFav, onBack, backLabel = "All recipes", onEdit, onDelete, onDuplicate, onToast, onAddToShop, onAddToPlan, onPatch, onCooked }) {
   const kind = scalingKind(recipe);
   const startServes = settings.defaultServes || recipe.baseServings;
   const [servings, setServings] = useState(startServes);
@@ -2581,15 +2663,17 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
     <div>
       <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 14, padding: "6px 0", fontWeight: 500 }}>
-          ← All recipes
+          ← {backLabel}
         </button>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <button className="k-press" onClick={toggleFav} aria-label="Toggle favourite" aria-pressed={fav} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 14px", fontSize: 15, color: fav ? C.mustard : C.inkSoft }}>
             {fav ? "★" : "☆"}
           </button>
           <button className="k-press" onClick={onEdit} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}>Edit</button>
           <button className="k-press" onClick={onDuplicate} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 16px", fontSize: 13, fontWeight: 500, color: C.ink }}>Duplicate</button>
-          {/* single tap — the undo toast is the safety net */}
+          {/* extra gap + a hairline divider before Delete — it's one tap now (undo
+              toast is the safety net), so it shouldn't sit flush against Edit/Duplicate */}
+          <span aria-hidden="true" style={{ width: 1, alignSelf: "stretch", background: C.line, margin: "0 2px" }} />
           <button className="k-press" onClick={onDelete} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "7px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Delete</button>
         </div>
       </div>
@@ -2767,26 +2851,10 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
         </div>
       )}
 
-      <ReverseScaler
-        recipe={recipe}
-        kind={kind}
-        onApply={(f, exact) => {
-          if (kind === "serves" && !exact) {
-            setOverride(null);
-            setServings(Math.max(1, Math.min(40, Math.round(f * recipe.baseServings))));
-          } else if (kind === "batch" && !exact) {
-            setOverride(null);
-            setBatch(BATCH_OPTIONS.reduce((best, b) => (Math.abs(b - f) < Math.abs(best - f) ? b : best), BATCH_OPTIONS[0]));
-          } else {
-            setOverride(f);
-          }
-        }}
-        onReset={() => { clearOverride(); setServings(startServes); setBatch(1); setPan(recipe.basePan || null); }}
-      />
-
-      <CostPerServe recipe={recipe} factor={factor} kind={kind} servings={servings} override={override} prices={prices} />
-
-      <div className="no-print" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22, alignItems: "center" }}>
+      {/* moved directly under the scaler, ahead of the reverse-scaler/cost
+          disclosures — those are secondary, and shouldn't push Cook further
+          down the page than it needs to be */}
+      <div className="no-print" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18, alignItems: "center" }}>
         <button
           className="k-press"
           onClick={() => setCooking(true)}
@@ -2864,6 +2932,25 @@ function RecipePage({ recipe, settings, prices = {}, myPans = [], allRecipes = [
           Print
         </button>
       </div>
+
+      <ReverseScaler
+        recipe={recipe}
+        kind={kind}
+        onApply={(f, exact) => {
+          if (kind === "serves" && !exact) {
+            setOverride(null);
+            setServings(Math.max(1, Math.min(40, Math.round(f * recipe.baseServings))));
+          } else if (kind === "batch" && !exact) {
+            setOverride(null);
+            setBatch(BATCH_OPTIONS.reduce((best, b) => (Math.abs(b - f) < Math.abs(best - f) ? b : best), BATCH_OPTIONS[0]));
+          } else {
+            setOverride(f);
+          }
+        }}
+        onReset={() => { clearOverride(); setServings(startServes); setBatch(1); setPan(recipe.basePan || null); }}
+      />
+
+      <CostPerServe recipe={recipe} factor={factor} kind={kind} servings={servings} override={override} prices={prices} />
 
       <div className="print-cols" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, alignItems: "start" }}>
         {/* container carries the depth; every row inside stays flat and opaque */}
@@ -3596,7 +3683,6 @@ function StaleFavourites({ recipes, plan, dates, openRecipe }) {
 function BakePlanner({ recipes, plans, setPlans, sendToShop, onToast, openRecipe }) {
   const [draft, setDraft] = useState({ name: "", date: "", time: "" });
   const [pickerFor, setPickerFor] = useState(null);
-  const [confirmDel, setConfirmDel] = useState(null);
 
   const sorted = [...plans].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const fmtDate = (d) => {
@@ -3727,11 +3813,18 @@ function BakePlanner({ recipes, plans, setPlans, sendToShop, onToast, openRecipe
                 >
                   Send ingredients to shopping list
                 </button>
-                {confirmDel !== pl.id ? (
-                  <button className="k-press" onClick={() => setConfirmDel(pl.id)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}>Delete plan</button>
-                ) : (
-                  <button className="k-press" onClick={() => { setPlans(plans.filter((p) => p.id !== pl.id)); setConfirmDel(null); }} style={{ background: C.danger, border: "none", color: "#fff", borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13, fontWeight: 600 }}>Confirm delete</button>
-                )}
+                {/* single tap — undo toast is the safety net, same as everywhere else */}
+                <button
+                  className="k-press"
+                  onClick={() => {
+                    const prev = plans;
+                    setPlans(plans.filter((p) => p.id !== pl.id));
+                    onToast({ text: `Deleted “${pl.name}”`, undo: () => setPlans(prev) });
+                  }}
+                  style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: RADIUS.pill, padding: "8px 16px", fontSize: 13, color: C.danger, fontWeight: 500 }}
+                >
+                  Delete plan
+                </button>
               </div>
               <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>
                 Set × per bake and the shopping list gets multiplied quantities. For pan-specific scaling, open the recipe itself.
@@ -4520,9 +4613,9 @@ function TipsPage({ kitchenTimers, setKitchenTimers, myTips, onAddTip, onRemoveT
 
 function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry = [], onAddStaple, onRemoveStaple, prices = {}, onSetPrice, onExport, onImport, restoreStarters, resetAll }) {
   const [panForm, setPanForm] = useState(null); // null | {name, shape, dims…}
-  const [confirmPanDel, setConfirmPanDel] = useState(null);
-  const [confirmReset, setConfirmReset] = useState(false);
   const [stapleText, setStapleText] = useState("");
+  const [stapleFormOpen, setStapleFormOpen] = useState(false);
+  const [priceFormOpen, setPriceFormOpen] = useState(false);
   const [priceForm, setPriceForm] = useState({ name: "", price: "", unit: "kg" });
   const serveOptions = [null, 1, 2, 3, 4, 5, 6, 8, 10];
   const addStaple = () => { onAddStaple(stapleText); setStapleText(""); };
@@ -4532,6 +4625,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
     if (!priceForm.name.trim() || !(p > 0)) return;
     onSetPrice(priceForm.name, p, priceForm.unit);
     setPriceForm({ name: "", price: "", unit: priceForm.unit });
+    setPriceFormOpen(false);
   };
 
   return (
@@ -4590,6 +4684,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         </div>
       </section>
 
+      <div style={groupHead()}>Cooking defaults</div>
       <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Household serves</h2>
         <p style={settingsHint()}>
@@ -4680,28 +4775,19 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
           Save the tins you actually own and they'll appear as one-tap options on every pan-scaled baking recipe.
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {myPans.map((p) =>
-            confirmPanDel === p.id ? (
-              <button className="k-press"
-                key={p.id}
-                onClick={() => { onRemovePan(p.id); setConfirmPanDel(null); }}
-                style={{ background: C.danger, border: "none", color: "#fff", borderRadius: 999, padding: "7px 16px", fontSize: 13, fontWeight: 600 }}
+          {/* single tap — the undo toast is the safety net, same as everywhere else */}
+          {myPans.map((p) => (
+            <span key={p.id} title={panLabel(p)} style={{ display: "inline-flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: 999, background: C.bg, overflow: "hidden" }}>
+              <span style={{ padding: "7px 6px 7px 14px", fontSize: 13, fontWeight: 600 }}>{p.name || panLabel(p)}</span>
+              <button
+                onClick={() => onRemovePan(p.id)}
+                aria-label={`Delete pan ${p.name || panLabel(p)}`}
+                style={{ background: "none", border: "none", padding: "7px 12px 7px 6px", fontSize: 15, color: C.danger }}
               >
-                Delete “{p.name || panLabel(p)}”?
+                ×
               </button>
-            ) : (
-              <span key={p.id} title={panLabel(p)} style={{ display: "inline-flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: 999, background: C.bg, overflow: "hidden" }}>
-                <span style={{ padding: "7px 6px 7px 14px", fontSize: 13, fontWeight: 600 }}>{p.name || panLabel(p)}</span>
-                <button
-                  onClick={() => setConfirmPanDel(p.id)}
-                  aria-label={`Delete pan ${p.name || panLabel(p)}`}
-                  style={{ background: "none", border: "none", padding: "7px 12px 7px 6px", fontSize: 15, color: C.danger }}
-                >
-                  ×
-                </button>
-              </span>
-            )
-          )}
+            </span>
+          ))}
           {!panForm && (
             <button className="k-press"
               onClick={() => setPanForm({ name: "", shape: "round", diameter: 20, quantity: 1 })}
@@ -4782,6 +4868,7 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
         )}
       </section>
 
+      <div style={groupHead()}>Shopping</div>
       <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Pantry staples</h2>
         <p style={settingsHint()}>
@@ -4803,21 +4890,38 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
           {!pantry.length && <span style={{ fontSize: 13, color: C.faint }}>Nothing marked yet — every ingredient goes on the list.</span>}
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <input
-            value={stapleText}
-            onChange={(e) => setStapleText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addStaple()}
-            placeholder="Add a staple — e.g. olive oil"
-            style={{ flex: 1, padding: "9px 13px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, fontSize: 14 }}
-          />
+        {/* same disclosure convention as My pans / Add a tip / Save as template:
+            a dashed trigger that expands to the form, rather than a permanently
+            visible input row */}
+        {!stapleFormOpen ? (
           <button
-            onClick={addStaple}
-            style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 10, padding: "0 18px", fontSize: 13.5, fontWeight: 600 }}
+            className="k-press"
+            onClick={() => setStapleFormOpen(true)}
+            style={{ background: "none", border: `1px dashed ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 13, color: C.inkSoft, fontWeight: 500, marginBottom: 12 }}
           >
-            Add
+            + Add a custom staple
           </button>
-        </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input
+              autoFocus
+              className="k-field"
+              value={stapleText}
+              onChange={(e) => setStapleText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && stapleText.trim()) { addStaple(); setStapleFormOpen(false); } }}
+              placeholder="Add a staple — e.g. olive oil"
+              style={{ flex: 1, padding: "9px 13px", borderRadius: RADIUS.sm, border: `1px solid ${C.line}`, background: C.bg, fontSize: 14 }}
+            />
+            <button
+              className="k-press"
+              onClick={() => { if (stapleText.trim()) { addStaple(); setStapleFormOpen(false); } }}
+              style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: RADIUS.sm, padding: "0 18px", fontSize: 13.5, fontWeight: 600 }}
+            >
+              Add
+            </button>
+            <button onClick={() => { setStapleFormOpen(false); setStapleText(""); }} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 13 }}>Cancel</button>
+          </div>
+        )}
 
         {SUGGESTED_STAPLES.some((s) => !pantry.includes(s)) && (
           <>
@@ -4865,50 +4969,66 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <label style={{ fontSize: 12, color: C.inkSoft, flex: "1 1 160px" }}>
-            Ingredient
-            <input
-              value={priceForm.name}
-              onChange={(e) => setPriceForm({ ...priceForm, name: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && addPrice()}
-              placeholder="e.g. beef mince"
-              style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
-            />
-          </label>
-          <label style={{ fontSize: 12, color: C.inkSoft, width: 100 }}>
-            Price
-            <input
-              type="number" min="0" step="0.01"
-              value={priceForm.price}
-              onChange={(e) => setPriceForm({ ...priceForm, price: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && addPrice()}
-              placeholder="12.00"
-              style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
-            />
-          </label>
-          <label style={{ fontSize: 12, color: C.inkSoft, width: 120 }}>
-            Unit
-            <select
-              value={priceForm.unit}
-              onChange={(e) => setPriceForm({ ...priceForm, unit: e.target.value })}
-              style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
-            >
-              {PRICE_UNITS.map(([u, label]) => <option key={u} value={u}>{label}</option>)}
-            </select>
-          </label>
-          <button className="k-press"
-            onClick={addPrice}
-            style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "10px 20px", fontSize: 13.5, fontWeight: 600 }}
+        {/* same disclosure convention as the rest of Settings */}
+        {!priceFormOpen ? (
+          <button
+            className="k-press"
+            onClick={() => setPriceFormOpen(true)}
+            style={{ background: "none", border: `1px dashed ${C.line}`, borderRadius: 999, padding: "8px 16px", fontSize: 13, color: C.inkSoft, fontWeight: 500 }}
           >
-            Save price
+            + Add a price
           </button>
-        </div>
-        <p style={{ ...settingsHint(), margin: "10px 0 0", fontSize: 12 }}>
-          Ingredients measured in something that can't be converted — “2 rashers”, “1 bunch” — are left out of the estimate entirely rather than guessed at.
-        </p>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <label style={{ fontSize: 12, color: C.inkSoft, flex: "1 1 160px" }}>
+                Ingredient
+                <input
+                  autoFocus
+                  value={priceForm.name}
+                  onChange={(e) => setPriceForm({ ...priceForm, name: e.target.value })}
+                  onKeyDown={(e) => e.key === "Enter" && addPrice()}
+                  placeholder="e.g. beef mince"
+                  style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
+                />
+              </label>
+              <label style={{ fontSize: 12, color: C.inkSoft, width: 100 }}>
+                Price
+                <input
+                  type="number" min="0" step="0.01"
+                  value={priceForm.price}
+                  onChange={(e) => setPriceForm({ ...priceForm, price: e.target.value })}
+                  onKeyDown={(e) => e.key === "Enter" && addPrice()}
+                  placeholder="12.00"
+                  style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
+                />
+              </label>
+              <label style={{ fontSize: 12, color: C.inkSoft, width: 120 }}>
+                Unit
+                <select
+                  value={priceForm.unit}
+                  onChange={(e) => setPriceForm({ ...priceForm, unit: e.target.value })}
+                  style={{ ...inputStyle(), background: C.bg, marginTop: 4 }}
+                >
+                  {PRICE_UNITS.map(([u, label]) => <option key={u} value={u}>{label}</option>)}
+                </select>
+              </label>
+              <button className="k-press"
+                onClick={addPrice}
+                style={{ background: C.green, color: C.onPrimary, border: "none", borderRadius: 999, padding: "10px 20px", fontSize: 13.5, fontWeight: 600 }}
+              >
+                Save price
+              </button>
+              <button onClick={() => setPriceFormOpen(false)} style={{ background: "none", border: "none", color: C.inkSoft, fontSize: 13 }}>Cancel</button>
+            </div>
+            <p style={{ ...settingsHint(), margin: "10px 0 0", fontSize: 12 }}>
+              Ingredients measured in something that can't be converted — “2 rashers”, “1 bunch” — are left out of the estimate entirely rather than guessed at.
+            </p>
+          </>
+        )}
       </section>
 
+      <div style={groupHead()}>Data</div>
       <section className="k-flat" style={settingsCard()}>
         <h2 style={sectionHead()}>Backup & transfer</h2>
         <p style={settingsHint()}>
@@ -4948,21 +5068,13 @@ function SettingsPage({ settings, update, myPans, onAddPan, onRemovePan, pantry 
           >
             Restore starter recipes
           </button>
-          {!confirmReset ? (
-            <button className="k-press"
-              onClick={() => setConfirmReset(true)}
-              style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontSize: 13.5, color: C.danger, fontWeight: 500 }}
-            >
-              Reset everything…
-            </button>
-          ) : (
-            <button className="k-press"
-              onClick={() => { resetAll(); setConfirmReset(false); }}
-              style={{ background: C.danger, border: "none", color: "#fff", borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 600 }}
-            >
-              Confirm — wipe recipes, planner and list
-            </button>
-          )}
+          {/* single tap — a 10s undo window (longer than the usual 5.2s) given the stakes */}
+          <button className="k-press"
+            onClick={resetAll}
+            style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: "9px 18px", fontSize: 13.5, color: C.danger, fontWeight: 500 }}
+          >
+            Reset everything
+          </button>
         </div>
       </section>
     </div>
@@ -4976,6 +5088,14 @@ const settingsCard = () => ({
 
 const settingsHint = () => ({
   fontSize: 13.5, color: C.inkSoft, margin: "0 0 12px", lineHeight: 1.55,
+});
+
+/* a landmark above a cluster of settingsCard()s, so a long stack of stacked
+   cards has somewhere to jump to rather than pure scroll */
+const groupHead = () => ({
+  fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 12.5,
+  letterSpacing: 1, textTransform: "uppercase", color: C.headMut,
+  margin: "26px 0 10px",
 });
 
 
