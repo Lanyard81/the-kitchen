@@ -96,20 +96,28 @@ function toFraction(v) {
   return whole ? `${whole}${best}` : best;
 }
 
+const UNICODE_FRACTIONS = { "¼": 0.25, "½": 0.5, "¾": 0.75, "⅓": 0.333, "⅔": 0.667, "⅛": 0.125 };
+
+// "1 1/2", "1/2", "1½", "1 ½", "½", "1.5" — in that preference order, since the
+// alternation below must try the mixed forms before the plain-number one matches short
+function parseAmountToken(raw) {
+  const s = raw.trim();
+  let mm = s.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+  if (mm) return parseFloat(mm[1]) + parseFloat(mm[2]) / parseFloat(mm[3]);
+  mm = s.match(/^(\d+)\/(\d+)$/);
+  if (mm) return parseFloat(mm[1]) / parseFloat(mm[2]);
+  mm = s.match(/^(\d+(?:[.,]\d+)?)\s*([¼½¾⅓⅔⅛])$/);
+  if (mm) return parseFloat(mm[1].replace(",", ".")) + UNICODE_FRACTIONS[mm[2]];
+  if (UNICODE_FRACTIONS[s] != null) return UNICODE_FRACTIONS[s];
+  return parseFloat(s.replace(",", "."));
+}
+
 function parseIngredientLine(line) {
   const t = line.trim();
   if (!t) return null;
-  const m = t.match(/^(\d+(?:[.,]\d+)?|\d+\/\d+|[¼½¾⅓⅔⅛])\s*(kg|g|ml|l|tbsp|tsp|cups|cup)?\s+(.+)$/i);
+  const m = t.match(/^(\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:[.,]\d+)?\s*[¼½¾⅓⅔⅛]|\d+(?:[.,]\d+)?|[¼½¾⅓⅔⅛])\s*(kg|g|ml|l|tbsp|tsp|cups|cup)?\s+(.+)$/i);
   if (!m) return { amount: null, unit: "", name: t };
-  let amt = m[1].replace(",", ".");
-  if (amt.includes("/")) {
-    const [a, b] = amt.split("/");
-    amt = parseFloat(a) / parseFloat(b);
-  } else {
-    const map = { "¼": 0.25, "½": 0.5, "¾": 0.75, "⅓": 0.333, "⅔": 0.667, "⅛": 0.125 };
-    amt = map[amt] ?? parseFloat(amt);
-  }
-  return { amount: amt, unit: m[2] ? m[2].toLowerCase() : "", name: m[3].trim() };
+  return { amount: parseAmountToken(m[1]), unit: m[2] ? m[2].toLowerCase() : "", name: m[3].trim() };
 }
 
 /* ---------- starter recipes ---------- */
