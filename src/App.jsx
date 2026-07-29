@@ -16,6 +16,7 @@ const K_MYPANS = "becs-kitchen-mypans-v1";
 const K_BAKEPLANS = "becs-kitchen-bakeplans-v1";
 const K_PANTRY = "becs-kitchen-pantry-v1";
 const K_PRICES = "becs-kitchen-prices-v1";
+const K_SEED_SEEN = "becs-kitchen-seed-seen-v1";
 
 const DEFAULT_SETTINGS = { defaultServes: null, oven: "fan", theme: "olive", mode: "auto", prepTicks: true };
 
@@ -1606,7 +1607,32 @@ export default function TheKitchen() {
         try { const r = await storageGet(key); return JSON.parse(r.value); }
         catch { return fallback; }
       };
-      setRecipes(await load(K_RECIPES, SEED_RECIPES));
+      const loadedRecipes = await load(K_RECIPES, SEED_RECIPES);
+      // deliver newly-added seed recipes to devices that already installed the
+      // app, without touching anything the cook has added, edited or deleted.
+      // K_SEED_SEEN is the set of seed ids this device has already "received" —
+      // an id only leaves that set by never having existed, so a deliberately
+      // deleted starter recipe never comes back on its own.
+      const seenIds = await load(K_SEED_SEEN, null);
+      if (seenIds == null) {
+        // first run of this feature — treat every seed recipe shipped as of
+        // today as already seen, so nothing already-installed changes here;
+        // only recipes added to the seed data after this point will auto-merge
+        storageSet(K_SEED_SEEN, JSON.stringify(SEED_RECIPES.map((r) => r.id))).catch(() => {});
+        setRecipes(loadedRecipes);
+      } else {
+        const seen = new Set(seenIds);
+        const newSeeds = SEED_RECIPES.filter((s) => !seen.has(s.id));
+        if (newSeeds.length) {
+          const merged = [...loadedRecipes, ...newSeeds];
+          setRecipes(merged);
+          storageSet(K_RECIPES, JSON.stringify(merged)).catch(() => {});
+          storageSet(K_SEED_SEEN, JSON.stringify(SEED_RECIPES.map((r) => r.id))).catch(() => {});
+          setToast(`Added ${newSeeds.length} new recipe${newSeeds.length > 1 ? "s" : ""} to your collection`);
+        } else {
+          setRecipes(loadedRecipes);
+        }
+      }
       const rawPlan = await load(K_PLAN, {});
       const p = migratePlan(rawPlan);
       setPlan(p);
